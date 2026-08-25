@@ -2,7 +2,7 @@ export const MAP_GEOMETRY = Object.freeze({
   rootWidth: 560,
   rootHeight: 216,
   nodeWidth: 270,
-  nodeHeight: 276,
+  nodeHeight: 304,
   siblingGap: 18,
   levelGap: 36,
   paddingX: 12,

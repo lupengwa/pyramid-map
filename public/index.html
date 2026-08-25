@@ -102,6 +102,11 @@
           <span>Capability title</span>
           <input id="editor-node-title" name="title" required autocomplete="off">
         </label>
+        <label class="editor-field editor-field-wide" id="editor-relationship-field">
+          <span>Link to parent</span>
+          <textarea id="editor-relationship" name="relationship" maxlength="180" rows="2"></textarea>
+          <small>One short sentence explaining what this child adds to its parent.</small>
+        </label>
         <div class="editor-section-toolbar">
           <div>
             <span>Card sections</span>
@@ -121,6 +126,7 @@
               <option value="proof">Proof</option>
               <option value="editorial">Editorial</option>
               <option value="signal">Signal</option>
+              <option value="mental-model">Mental model</option>
             </select>
           </label>
           <label class="editor-field">

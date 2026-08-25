@@ -1,5 +1,5 @@
 export type EvidenceKind = "structural" | "source" | "e2e"
-export type CardStyle = "proof" | "editorial" | "signal"
+export type CardStyle = "proof" | "editorial" | "signal" | "mental-model"
 
 export interface ProofSection {
   key: string
@@ -10,6 +10,7 @@ export interface ProofSection {
 export interface GweNode {
   id: string
   title: string
+  relationship?: string
   pattern: string
   style: CardStyle
   sections: ProofSection[]
@@ -57,7 +58,7 @@ export function parseMapDocument(value: unknown): ProofMapDocument {
   return { version: 2, revision: 0, root: parseTree(value) }
 }
 
-export function parseEditableNode(value: unknown): EditableGweNode {
+export function parseEditableNode(value: unknown, relationshipRequired = false): EditableGweNode {
   if (!isRecord(value)) throw new Error("Editable GWE content must be an object")
 
   const textFields = ["title", "source"] as const
@@ -77,9 +78,11 @@ export function parseEditableNode(value: unknown): EditableGweNode {
   const sections = value.sections === undefined
     ? parseLegacySections(value, "editable node")
     : parseSections(value.sections, "editable node")
+  const relationship = parseRelationship(value.relationship, "editable node", relationshipRequired)
 
   return {
     title: parsed.title,
+    ...(relationship === undefined ? {} : { relationship }),
     pattern,
     style,
     sections,
@@ -129,6 +132,7 @@ function parseNode(value: unknown, location: string, ids: Set<string>): GweNode 
   if (!isEvidence(value.evidence)) throw new Error(`GWE node ${value.id} has invalid evidence`)
   if (ids.has(value.id)) throw new Error(`Duplicate GWE node id: ${value.id}`)
   ids.add(value.id)
+  const relationship = parseRelationship(value.relationship, `GWE node ${value.id}`, false)
 
   let children: GweNode[] | undefined
   if (value.children !== undefined) {
@@ -141,6 +145,7 @@ function parseNode(value: unknown, location: string, ids: Set<string>): GweNode 
   return {
     id: value.id,
     title: value.title,
+    ...(relationship === undefined ? {} : { relationship }),
     pattern: parsePlainLabel(value.pattern ?? "gwe-notes", `${value.id}.pattern`),
     style: parseCardStyle(value.style ?? "proof"),
     sections: value.sections === undefined
@@ -150,6 +155,23 @@ function parseNode(value: unknown, location: string, ids: Set<string>): GweNode 
     source: value.source,
     ...(children === undefined ? {} : { children }),
   }
+}
+
+function parseRelationship(value: unknown, location: string, required: boolean): string | undefined {
+  if (value === undefined || value === null || value === "") {
+    if (required) throw new Error(`${location} requires a concise relationship to its parent`)
+    return undefined
+  }
+  if (typeof value !== "string" || /[<>]/.test(value)) {
+    throw new Error(`${location} relationship must be plain text`)
+  }
+  const relationship = value.trim()
+  if (relationship === "") {
+    if (required) throw new Error(`${location} requires a concise relationship to its parent`)
+    return undefined
+  }
+  if (relationship.length > 180) throw new Error(`${location} relationship must be 180 characters or fewer`)
+  return relationship
 }
 
 function parseLegacySections(value: Record<string, any>, location: string): ProofSection[] {
@@ -202,7 +224,7 @@ function parsePlainLabel(value: unknown, location: string): string {
 }
 
 function parseCardStyle(value: unknown): CardStyle {
-  if (value === "proof" || value === "editorial" || value === "signal") return value
+  if (value === "proof" || value === "editorial" || value === "signal" || value === "mental-model") return value
   throw new Error(`Unknown card style: ${String(value)}`)
 }
 

@@ -107,7 +107,7 @@ export async function createDataStore(paths: DataStorePaths): Promise<DataStore>
       if (!validIds.has(id)) throw new Error(`Unknown GWE node: ${id}`)
       const before = findNode(tree, id)
       if (before === null) throw new Error(`Unknown GWE node: ${id}`)
-      const content = parseEditableNode(input)
+      const content = parseEditableNode(input, id !== tree.id)
       const changedFields = changedContentFields(before, content)
       if (changedFields.length === 0) return mutationResult(document.revision, tree, state)
       const nextTree = parseTree(updateNodeContent(tree, id, content))
@@ -116,7 +116,7 @@ export async function createDataStore(paths: DataStorePaths): Promise<DataStore>
     }),
     addChild: (parentId, input) => mutate(async () => {
       if (!validIds.has(parentId)) throw new Error(`Unknown GWE node: ${parentId}`)
-      const content = parseEditableNode(input)
+      const content = parseEditableNode(input, true)
       const nodeId = nextChildId(tree, parentId)
       const child: GweNode = { id: nodeId, ...content }
       const nextTree = parseTree(appendChild(tree, parentId, child))

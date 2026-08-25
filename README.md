@@ -91,7 +91,12 @@ The current schema is a version 2 document:
 ```
 
 Each node requires a unique ID, title, pattern, style, one to eight ordered sections, evidence kind, and source.
-The supported styles are `proof`, `editorial`, and `signal`.
+Every non-root node should also carry one plain-text `relationship` sentence of at most 180 characters.
+It states what the child adds to its parent and stays visible on the card without a click.
+The browser editor requires this sentence whenever a child is added or edited, while older maps without it remain readable.
+The supported styles are `proof`, `editorial`, `signal`, and `mental-model`.
+Every style shows the full node title.
+The `mental-model` style promotes the first section as the at-a-glance card content and keeps the remaining sections in the node detail.
 The supported evidence kinds are `structural`, `source`, and `e2e`.
 Section bodies support plain text and balanced `<code>...</code>` inline markup.
 The legacy Given, When, Expect, and Notes fields remain readable and normalize to the version 2 node model.
@@ -115,7 +120,7 @@ Verification mutations write only `verification.json`.
 The server binds only to `127.0.0.1`.
 
 `public/map-model.js` derives visible branches, card rows, geometry, and smooth parent-child paths.
-`public/app.js` renders the map, handles zoom and pan, opens node details, and saves human edits.
+`public/app.js` renders the map, keeps each child-to-parent relationship visible, handles zoom and pan, opens node details, and saves human edits.
 `public/styles.css` owns the compact two-level default layout, card styles, verified state, and editor.
 
 `bin/pyramid-map` is the agent inspection entrance.
@@ -157,7 +162,7 @@ Run:
 bun run verify
 ```
 
-The gate validates schemas, current-versus-baseline behavior, tree mutations, human verification, branch relationships, compact layout, wide fan-out, CLI output, browser assets, per-tab map isolation, and shared-server launcher reuse.
+The gate validates schemas, current-versus-baseline behavior, tree mutations, human verification, authored child-to-parent relationships, compact layout, wide fan-out, CLI output, browser assets, per-tab map isolation, and shared-server launcher reuse.
 All mutation checks run against temporary files.
 The bundled map and its verification state remain unchanged.
 

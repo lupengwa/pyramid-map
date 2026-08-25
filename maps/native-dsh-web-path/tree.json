@@ -11,6 +11,7 @@
     {
       "id": "G1",
       "title": "The Web profile composes one long-lived host and agent runtime.",
+      "relationship": "This gives G0 one host and agent runtime for the whole conversation.",
       "given": "G1.1 through G1.4 hold.",
       "when": "<code>runProfile()</code> receives the Web boot request.",
       "expect": "One Cordis root owns the agent runtime and Web host services until the foreground process shuts down.",
@@ -21,6 +22,7 @@
         {
           "id": "G1.1",
           "title": "<code>dsh web</code> selects the shipped Web profile.",
+          "relationship": "This selects the Web profile that G1 starts.",
           "given": "The DSH CLI is installed and receives a valid <code>web</code> subcommand.",
           "when": "The CLI parser resolves the subcommand.",
           "expect": "It produces the same request as <code>--profile web</code> and forwards Web arguments.",
@@ -31,6 +33,7 @@
         {
           "id": "G1.2",
           "title": "The Web profile stacks base, Web, and override layers.",
+          "relationship": "This gives G1 the base and Web layers it needs.",
           "given": "The Web profile is absent or contains its shipped bundle roster.",
           "when": "Profile discovery initializes or loads the roster.",
           "expect": "<code>dsh-base</code> applies first, <code>dsh-web-app</code> applies next, and user overlays remain above both.",
@@ -41,6 +44,7 @@
         {
           "id": "G1.3",
           "title": "Boot mounts and audits the complete Cordis tree.",
+          "relationship": "This starts G1's full Cordis tree and checks every entry.",
           "given": "The composed patch stack resolves and every required package is available.",
           "when": "<code>boot()</code> mounts Loader and waits for settlement.",
           "expect": "Every entry becomes active or startup fails with the responsible plugin error.",
@@ -51,6 +55,7 @@
         {
           "id": "G1.4",
           "title": "<code>dsh-base</code> supplies the harness capabilities.",
+          "relationship": "This supplies the shared agent runtime used by G1.",
           "given": "The base bundle patch is the first profile layer.",
           "when": "Its rows join the empty Cordis deployment.",
           "expect": "The deployment gains sessions, persistence, metering, compaction, tools, agent loop, policy, and model adapters.",
@@ -63,6 +68,7 @@
     {
       "id": "G2",
       "title": "The browser UI is a projection of the live host composition.",
+      "relationship": "This gives G0 the browser surface where the conversation appears.",
       "given": "G2.1 through G2.4 hold.",
       "when": "A browser requests the native DSH URL.",
       "expect": "The browser activates the client plugins belonging to the current host deployment and mounts a resident session surface.",
@@ -73,6 +79,7 @@
         {
           "id": "G2.1",
           "title": "The native host serves API routes and the SPA fallback.",
+          "relationship": "This gives G2 the server routes that carry the browser app.",
           "given": "The Web profile mounts the HTTP server and Web application glue.",
           "when": "An HTTP request reaches the bound route table.",
           "expect": "Named routes own API and plugin requests while the frontend owner serves unmatched SPA paths.",
@@ -83,6 +90,7 @@
         {
           "id": "G2.2",
           "title": "The Web bundle mounts the frontend and publishes its URL.",
+          "relationship": "This mounts the app and gives G2 a browser URL.",
           "given": "The server is bound and the packaged frontend exists.",
           "when": "<code>dsh-web-app.apply()</code> activates.",
           "expect": "It mounts the frontend, publishes runtime facts, prints the URL, and optionally opens the browser.",
@@ -93,6 +101,7 @@
         {
           "id": "G2.3",
           "title": "The host derives a browser graph from live Loader entries.",
+          "relationship": "This tells G2 which client plugins to load.",
           "given": "Mounted packages may publish a built <code>dsh.client</code> face.",
           "when": "The module registry scans host Loader entries and transforms the served index.",
           "expect": "The page receives a validated boot graph and same-origin routes for each client bundle.",
@@ -103,6 +112,7 @@
         {
           "id": "G2.4",
           "title": "The browser builds and audits its Cordis client tree.",
+          "relationship": "This starts the client tree that renders G2.",
           "given": "The page contains the bootstrap facade, boot graph, and loadable bundles.",
           "when": "<code>AppWebEntry.run()</code> creates a browser Context.",
           "expect": "Every client entry activates or fails visibly before the UI renderer receives the root element.",
@@ -115,6 +125,7 @@
     {
       "id": "G3",
       "title": "One browser session can carry multiple conversation rounds.",
+      "relationship": "This proves G0 can handle more than one turn in the same session.",
       "given": "G3.1 through G3.5 hold and one workspace-backed browser Session remains selected.",
       "when": "The human submits a prompt, observes its completion, and submits a second prompt in the same composer.",
       "expect": "Both submissions use the same session ID, each reaches the DSH Agent, both turns appear in the same conversation, and input remains available afterward.",
@@ -125,6 +136,7 @@
         {
           "id": "G3.1",
           "title": "The composer settles each submission back into an input-ready state.",
+          "relationship": "This lets G3 accept another prompt after each reply.",
           "given": "A session input shell owns a non-empty draft and no submission is already in flight.",
           "when": "The submission succeeds.",
           "expect": "The draft commits, the machine returns to <code>plain</code>, and the same shell can begin another submission.",
@@ -135,6 +147,7 @@
         {
           "id": "G3.2",
           "title": "The browser Session turns each submission into a typed prompt call.",
+          "relationship": "This sends each G3 prompt with the same session ID.",
           "given": "A browser Session exists and the composer supplies content.",
           "when": "<code>Session.prompt()</code> receives queue or steer input.",
           "expect": "It calls <code>api.sessions.prompt</code> with its stable session ID, content, mode, and browser time zone.",
@@ -145,6 +158,7 @@
         {
           "id": "G3.3",
           "title": "The browser carrier separates prompt admission from event delivery.",
+          "relationship": "This carries G3 prompts and events over separate paths.",
           "given": "The page passed the trust fence and its connection generation is active.",
           "when": "The browser performs an API operation and runs its event loops.",
           "expect": "Unary calls use HTTP while host and session facts arrive through reconnecting downlink streams.",
@@ -155,6 +169,7 @@
         {
           "id": "G3.4",
           "title": "The API proxy admits content to a live or resumable Agent.",
+          "relationship": "This sends each G3 prompt to the right agent.",
           "given": "The session resolves to an Agent, content is valid, and prompt mode is supported.",
           "when": "The host handles <code>session.prompt</code>.",
           "expect": "It creates one durable user message and sends it through <code>followup()</code> or <code>steer()</code>.",
@@ -165,6 +180,7 @@
         {
           "id": "G3.5",
           "title": "Runtime events update the same browser session mirror.",
+          "relationship": "This keeps G3's browser view current after every event.",
           "given": "The mux stream is subscribed and the DSH Session emits canonical events.",
           "when": "The API proxy pushes session frames.",
           "expect": "The browser repairs gaps, derives the next conversation snapshot, and notifies the rendered UI.",
@@ -177,6 +193,7 @@
     {
       "id": "G4",
       "title": "DSH core executes and preserves every admitted turn.",
+      "relationship": "This gives G0 the agent loop and saved history behind each turn.",
       "given": "G4.1 through G4.4 hold.",
       "when": "An admitted user message enters the Agent inbox.",
       "expect": "The normal DSH turn machine reaches the provider, records canonical events, flushes durable history, and returns the Agent to idle.",
@@ -187,6 +204,7 @@
         {
           "id": "G4.1",
           "title": "The Agent inbox wakes the normal turn driver.",
+          "relationship": "This starts the normal turn flow used by G4.",
           "given": "A live Agent is idle and its inbox receives an admitted message.",
           "when": "<code>followup()</code> targets a turn or <code>steer()</code> targets a step.",
           "expect": "The driver opens a turn, claims input, assembles prompts and tools, and advances the regular step machine.",
@@ -197,6 +215,7 @@
         {
           "id": "G4.2",
           "title": "The configured adapter owns provider transport.",
+          "relationship": "This connects G4 to the selected model provider.",
           "given": "The route resolves, credentials exist, and the request fits provider capabilities.",
           "when": "The loop invokes the adapter's <code>stream()</code>.",
           "expect": "The adapter sends the request, parses streaming output, and yields normalized DSH chunks.",
@@ -207,6 +226,7 @@
         {
           "id": "G4.3",
           "title": "The Session event log remains the shared source of truth.",
+          "relationship": "This gives G4 one ordered record of every turn.",
           "given": "The turn owns a DSH Session and runtime facts have canonical event forms.",
           "when": "The loop records input, steps, messages, tools, results, and turn completion.",
           "expect": "Model history, live updates, replay, resume, metering, compaction, and projections derive from one ordered log.",
@@ -217,6 +237,7 @@
         {
           "id": "G4.4",
           "title": "Persistence preserves sessions across browser and host lifecycles.",
+          "relationship": "This keeps G4's history after the browser or host closes.",
           "given": "The base profile mounts JSONL persistence and checkpoint policy.",
           "when": "A turn reaches a durability boundary or the host disposes.",
           "expect": "Events flush to the session root and later Web sessions can inspect or resume the history.",

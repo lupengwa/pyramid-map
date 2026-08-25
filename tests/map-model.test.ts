@@ -11,6 +11,7 @@ describe("interactive proof map", () => {
 
     expect(rootEdges.map((edge) => edge.childId)).toEqual(["G1", "G2", "G3", "G4"])
     expect(new Set(rootEdges.map((edge) => edge.to.y)).size).toBe(1)
+    expect(tree.children.every((child) => typeof child.relationship === "string" && child.relationship.length > 0)).toBe(true)
   })
 
   test("draws each proof relationship as a smooth MindNode-style branch", () => {
@@ -34,7 +35,7 @@ describe("interactive proof map", () => {
     expect(root.y).toBeLessThanOrEqual(18)
     expect(children[0].y - (root.y + root.height)).toBeLessThanOrEqual(54)
     expect(layout.width).toBeLessThanOrEqual(1200)
-    expect(layout.height).toBeLessThanOrEqual(560)
+    expect(layout.height).toBeLessThanOrEqual(600)
 
     for (const node of layout.nodes) {
       const proofRows = createNodeProofRows(node)
