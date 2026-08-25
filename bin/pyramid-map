@@ -1,0 +1,10 @@
+#!/usr/bin/env bun
+
+const arguments_ = process.argv.slice(2)
+if (arguments_.length === 1 && ["-v", "-V", "--version"].includes(arguments_[0])) {
+  console.log("1.0.0")
+  process.exit(0)
+}
+
+const { main } = await import("../src/cli")
+process.exitCode = await main(arguments_)

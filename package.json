@@ -1,0 +1,21 @@
+{
+  "name": "pyramid-map",
+  "version": "1.0.0",
+  "description": "A shared, revisioned pyramid map for human and agent collaboration.",
+  "license": "BSD-2-Clause",
+  "repository": "https://github.com/lupengwa/pyramid-map",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "pyramid-map": "bin/pyramid-map"
+  },
+  "scripts": {
+    "map": "bun run bin/pyramid-map",
+    "start": "bun run verify && bun run server.ts --open",
+    "test": "bun test",
+    "verify": "bun test && bun run scripts/verify.ts"
+  },
+  "dependencies": {
+    "@toon-format/toon": "^4.1.1"
+  }
+}

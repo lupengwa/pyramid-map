@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A shared, revisioned pyramid proof map for human and agent collaboration.">
+  <title>Native DSH Web path - shared pyramid map</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="app-header" id="answer">
+      <div class="app-title">
+        <p class="eyebrow">Native DSH Web path</p>
+        <h1>One composed host carries a human conversation from browser input to durable agent history.</h1>
+      </div>
+      <nav class="map-toolbar" aria-label="Proof map controls">
+        <div class="tool-group" aria-label="Zoom controls">
+          <button class="icon-button" id="zoom-out" type="button" aria-label="Zoom out" title="Zoom out (-)">−</button>
+          <output id="zoom-level" aria-label="Current zoom">100%</output>
+          <button class="icon-button" id="zoom-in" type="button" aria-label="Zoom in" title="Zoom in (+)">+</button>
+          <button class="text-button" id="fit-map" type="button" title="Fit visible map (0)">Fit</button>
+        </div>
+        <div class="tool-group" aria-label="Tree controls">
+          <button class="text-button" id="expand-all" type="button">Expand all</button>
+          <button class="text-button" id="collapse-map" type="button">Overview</button>
+        </div>
+        <div class="focus-context" id="focus-context" hidden>
+          <span id="focus-label"></span>
+          <button class="text-button" id="show-full-tree" type="button">Full tree</button>
+        </div>
+        <button class="text-button reset-button" id="reset-verification" type="button" disabled>Reset</button>
+      </nav>
+      <div class="save-state" aria-live="polite">
+        <strong id="verification-count">Loading</strong>
+        <span id="save-status">Reading app data</span>
+      </div>
+    </header>
+
+    <p class="app-message" id="app-message" role="status" hidden></p>
+
+    <section class="map-workspace" aria-label="Interactive pyramid proof tree">
+      <div class="map-viewport" id="map-viewport" tabindex="0" aria-label="Proof map canvas. Drag to pan. Use plus and minus to zoom. Select a node and press Enter for details.">
+        <div class="map-pan-layer" id="map-pan-layer">
+          <div class="map-scene" id="map-scene">
+            <svg class="map-edges" id="map-edges" aria-hidden="true"></svg>
+            <div class="map-nodes" id="map-nodes"></div>
+          </div>
+        </div>
+      </div>
+      <output class="canvas-hint" id="canvas-hint" aria-live="polite" hidden></output>
+    </section>
+  </main>
+
+  <dialog class="node-dialog" id="node-dialog" aria-labelledby="dialog-title">
+    <article class="detail-card">
+      <header class="detail-header">
+        <div>
+          <p class="detail-id" id="dialog-id"></p>
+          <h2 id="dialog-title"></h2>
+        </div>
+        <button class="icon-button close-button" id="close-dialog" type="button" aria-label="Close details">×</button>
+      </header>
+      <div class="detail-scroll">
+        <p class="proof-path" id="dialog-path"></p>
+        <dl class="detail-gwe" id="dialog-sections"></dl>
+        <section class="detail-extra" aria-labelledby="proof-context-title">
+          <h3 id="proof-context-title">Proof context</h3>
+          <p id="dialog-relationship"></p>
+          <div class="detail-evidence">
+            <span class="badge" id="dialog-evidence"></span>
+            <code id="dialog-source"></code>
+          </div>
+        </section>
+      </div>
+      <footer class="detail-actions">
+        <button class="primary-button" id="dialog-verify" type="button"></button>
+        <button class="text-button" id="dialog-toggle-children" type="button" hidden></button>
+        <button class="text-button" id="dialog-focus" type="button">Focus branch</button>
+        <span class="action-divider" aria-hidden="true"></span>
+        <button class="text-button" id="dialog-edit" type="button">Edit node</button>
+        <button class="text-button" id="dialog-add-child" type="button">Add child</button>
+        <button class="text-button remove-node-button" id="dialog-remove-node" type="button">Remove node</button>
+      </footer>
+    </article>
+  </dialog>
+
+  <dialog class="editor-dialog" id="node-editor-dialog" aria-labelledby="editor-title">
+    <form class="editor-form" id="node-editor-form">
+      <header class="editor-header">
+        <div>
+          <p class="detail-id" id="editor-mode"></p>
+          <h2 id="editor-title">Edit capability proof</h2>
+          <p class="editor-node-id" id="editor-node-id"></p>
+        </div>
+        <button class="icon-button close-button" id="close-editor" type="button" aria-label="Cancel editing">×</button>
+      </header>
+      <div class="editor-scroll">
+        <label class="editor-field editor-field-wide">
+          <span>Capability title</span>
+          <input id="editor-node-title" name="title" required autocomplete="off">
+        </label>
+        <div class="editor-section-toolbar">
+          <div>
+            <span>Card sections</span>
+            <small>Labels, wording, and order are node-specific.</small>
+          </div>
+          <button class="text-button" id="add-editor-section" type="button">Add section</button>
+        </div>
+        <div class="editor-sections" id="editor-sections"></div>
+        <div class="editor-format-grid">
+          <label class="editor-field">
+            <span>Pattern name</span>
+            <input id="editor-pattern" name="pattern" required autocomplete="off">
+          </label>
+          <label class="editor-field">
+            <span>Card style</span>
+            <select id="editor-style" name="style">
+              <option value="proof">Proof</option>
+              <option value="editorial">Editorial</option>
+              <option value="signal">Signal</option>
+            </select>
+          </label>
+          <label class="editor-field">
+            <span>Evidence</span>
+            <select id="editor-evidence" name="evidence">
+              <option value="structural">Structural</option>
+              <option value="source">Source traced</option>
+              <option value="e2e">Recorded E2E path</option>
+            </select>
+          </label>
+          <label class="editor-field">
+            <span>Source</span>
+            <input id="editor-source" name="source" required autocomplete="off">
+          </label>
+        </div>
+        <p class="editor-help">Section bodies support plain text and <code>&lt;code&gt;...&lt;/code&gt;</code> inline markup. Keys use lowercase slugs.</p>
+        <p class="editor-error" id="editor-error" role="alert" hidden></p>
+      </div>
+      <footer class="editor-actions">
+        <button class="text-button" id="cancel-editor" type="button">Cancel</button>
+        <button class="primary-button" id="save-node" type="submit">Save node</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog class="confirm-dialog" id="delete-dialog" aria-labelledby="delete-title">
+    <form method="dialog">
+      <p class="eyebrow">Proof tree authoring</p>
+      <h2 id="delete-title">Remove this node?</h2>
+      <p id="delete-message"></p>
+      <div class="confirm-actions">
+        <button class="text-button" value="cancel">Cancel</button>
+        <button class="danger-button" value="confirm">Remove subtree</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="confirm-dialog" id="reset-dialog" aria-labelledby="reset-title">
+    <form method="dialog">
+      <p class="eyebrow">Human verification</p>
+      <h2 id="reset-title">Reset every verification mark?</h2>
+      <p>This empties <code>data/verification.json</code>. The proof tree itself is unchanged.</p>
+      <div class="confirm-actions">
+        <button class="text-button" value="cancel">Cancel</button>
+        <button class="danger-button" id="confirm-reset" value="confirm">Reset marks</button>
+      </div>
+    </form>
+  </dialog>
+
+  <p class="sr-only" id="verification-announcement" aria-live="polite"></p>
+</body>
+</html>
