@@ -14,6 +14,9 @@ const zoomLevel = document.querySelector("#zoom-level")
 const focusContext = document.querySelector("#focus-context")
 const focusLabel = document.querySelector("#focus-label")
 const canvasHint = document.querySelector("#canvas-hint")
+const mapNameElement = document.querySelector("#map-name")
+const mapAnswerElement = document.querySelector("#map-answer")
+const selectedMapDirectory = new URL(window.location.href).searchParams.get("map")
 
 const nodeDialog = document.querySelector("#node-dialog")
 const editorDialog = document.querySelector("#node-editor-dialog")
@@ -57,6 +60,7 @@ async function loadApp() {
       requestJson("/api/verification"),
     ])
     proofTree = tree
+    renderMapIdentity(tree)
     treeIndex = indexTree(tree)
     verification = savedVerification
     selectedId = tree.id
@@ -67,6 +71,14 @@ async function loadApp() {
   } finally {
     viewportElement.setAttribute("aria-busy", "false")
   }
+}
+
+function renderMapIdentity(tree) {
+  const directoryName = selectedMapDirectory?.split(/[\\/]/).filter(Boolean).at(-1)
+  const mapName = directoryName === undefined ? "Pyramid Map" : directoryName.replaceAll(/[-_]+/g, " ")
+  mapNameElement.textContent = mapName.replace(/^./, (character) => character.toUpperCase())
+  mapAnswerElement.innerHTML = tree.title
+  document.title = `${plainText(tree.title)} - Pyramid Map`
 }
 
 function renderMap({ fit = false } = {}) {
@@ -585,7 +597,9 @@ function currentTimeLabel() {
 }
 
 async function requestJson(path, options) {
-  const response = await fetch(path, options)
+  const url = new URL(path, window.location.origin)
+  if (selectedMapDirectory !== null) url.searchParams.set("map", selectedMapDirectory)
+  const response = await fetch(url, options)
   const body = await response.json().catch(() => null)
   if (!response.ok) throw new Error(body?.error ?? `${response.status} ${response.statusText}`)
   return body

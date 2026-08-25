@@ -1,5 +1,5 @@
-import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
+import { dirname } from "node:path"
 
 import {
   collectNodeIds,
@@ -13,26 +13,6 @@ import {
   type VerificationState,
 } from "./model"
 
-export type MutationActor = "human" | "agent"
-export type MapAction = "import" | "update" | "add" | "remove" | "verify" | "unverify" | "reset-verification"
-
-export interface MutationOptions {
-  actor?: MutationActor
-  expectedRevision?: number
-}
-
-export interface MapActivity {
-  revision: number
-  timestamp: string
-  actor: MutationActor | "system"
-  action: MapAction
-  nodeId: string
-  parentId?: string
-  summary: string
-  before?: unknown
-  after?: unknown
-}
-
 export interface MapSnapshot {
   revision: number
   tree: GweNode
@@ -44,13 +24,12 @@ export interface DataStore {
   getSnapshot(): MapSnapshot
   getTree(): GweNode
   getVerification(): VerificationState
-  getActivities(sinceRevision?: number, actor?: MutationActor): MapActivity[]
   hasNode(id: string): boolean
-  setVerified(id: string, isVerified: boolean, options?: MutationOptions): Promise<VerificationState>
-  resetVerification(options?: MutationOptions): Promise<VerificationState>
-  updateNode(id: string, input: unknown, options?: MutationOptions): Promise<TreeMutationResult>
-  addChild(parentId: string, input: unknown, options?: MutationOptions): Promise<TreeMutationResult & { nodeId: string }>
-  removeNode(id: string, options?: MutationOptions): Promise<TreeMutationResult & { parentId: string, removedIds: string[] }>
+  setVerified(id: string, isVerified: boolean): Promise<VerificationState>
+  resetVerification(): Promise<VerificationState>
+  updateNode(id: string, input: unknown): Promise<TreeMutationResult>
+  addChild(parentId: string, input: unknown): Promise<TreeMutationResult & { nodeId: string }>
+  removeNode(id: string): Promise<TreeMutationResult & { parentId: string, removedIds: string[] }>
 }
 
 export interface TreeMutationResult extends MapSnapshot {}
@@ -58,16 +37,13 @@ export interface TreeMutationResult extends MapSnapshot {}
 export interface DataStorePaths {
   treePath: string
   verificationPath: string
-  activityPath?: string
 }
 
 export async function createDataStore(paths: DataStorePaths): Promise<DataStore> {
-  const activityPath = paths.activityPath ?? join(dirname(paths.treePath), "activity.jsonl")
   let document = parseMapDocument(JSON.parse(await readFile(paths.treePath, "utf8")))
   let tree = document.root
   let validIds = collectNodeIds(tree)
   let state = parseVerification(JSON.parse(await readFile(paths.verificationPath, "utf8")), validIds)
-  let activities = await readActivities(activityPath)
   let writeQueue = Promise.resolve()
 
   const enqueue = <Result>(work: () => Promise<Result>): Promise<Result> => {
@@ -81,29 +57,26 @@ export async function createDataStore(paths: DataStorePaths): Promise<DataStore>
     tree = document.root
     validIds = collectNodeIds(tree)
     state = parseVerification(JSON.parse(await readFile(paths.verificationPath, "utf8")), validIds)
-    activities = await readActivities(activityPath)
   }
 
-  const mutate = <Result>(options: MutationOptions | undefined, work: (actor: MutationActor) => Promise<Result>) => enqueue(
+  const mutate = <Result>(work: () => Promise<Result>) => enqueue(
     () => withFileLock(paths.treePath, async () => {
       await refreshUnlocked()
-      assertExpectedRevision(options?.expectedRevision, document.revision)
-      return work(options?.actor ?? "human")
+      return work()
     }),
   )
 
-  const commit = async (nextTree: GweNode, nextState: VerificationState, activity: Omit<MapActivity, "revision" | "timestamp">) => {
-    const nextRevision = document.revision + 1
-    const nextDocument: ProofMapDocument = { version: 2, revision: nextRevision, root: nextTree }
-    const nextActivity: MapActivity = { revision: nextRevision, timestamp: new Date().toISOString(), ...activity }
-    await writeJsonAtomically(paths.treePath, nextDocument)
+  const commit = async (nextTree: GweNode, nextState: VerificationState) => {
+    const treeChanged = nextTree !== tree
+    const nextDocument: ProofMapDocument = treeChanged
+      ? { version: 2, revision: document.revision + 1, root: nextTree }
+      : document
+    if (treeChanged) await writeJsonAtomically(paths.treePath, nextDocument)
     if (nextState !== state) await writeJsonAtomically(paths.verificationPath, nextState)
-    await appendActivity(activityPath, nextActivity)
     document = nextDocument
     tree = nextTree
     validIds = collectNodeIds(tree)
     state = nextState
-    activities.push(nextActivity)
   }
 
   return {
@@ -111,11 +84,8 @@ export async function createDataStore(paths: DataStorePaths): Promise<DataStore>
     getSnapshot: () => snapshot(document.revision, tree, state),
     getTree: () => structuredClone(tree),
     getVerification: () => cloneState(state),
-    getActivities: (sinceRevision = -1, actor) => activities
-      .filter((activity) => activity.revision > sinceRevision && (actor === undefined || activity.actor === actor))
-      .map((activity) => structuredClone(activity)),
     hasNode: (id) => validIds.has(id),
-    setVerified: (id, isVerified, options) => mutate(options, async (actor) => {
+    setVerified: (id, isVerified) => mutate(async () => {
       if (!validIds.has(id)) throw new Error(`Unknown GWE node: ${id}`)
       const alreadyVerified = id in state.verified
       if (alreadyVerified === isVerified) return cloneState(state)
@@ -124,30 +94,16 @@ export async function createDataStore(paths: DataStorePaths): Promise<DataStore>
       if (isVerified) verified[id] = { verifiedAt: now }
       else delete verified[id]
       const nextState: VerificationState = { version: 1, updatedAt: now, verified }
-      await commit(tree, nextState, {
-        actor,
-        action: isVerified ? "verify" : "unverify",
-        nodeId: id,
-        summary: `${id} ${isVerified ? "marked verified" : "unmarked"}`,
-        before: { verified: alreadyVerified },
-        after: { verified: isVerified },
-      })
+      await commit(tree, nextState)
       return cloneState(state)
     }),
-    resetVerification: (options) => mutate(options, async (actor) => {
+    resetVerification: () => mutate(async () => {
       if (Object.keys(state.verified).length === 0) return cloneState(state)
       const nextState: VerificationState = { version: 1, updatedAt: new Date().toISOString(), verified: {} }
-      await commit(tree, nextState, {
-        actor,
-        action: "reset-verification",
-        nodeId: tree.id,
-        summary: `Cleared ${Object.keys(state.verified).length} verification marks`,
-        before: { verifiedIds: Object.keys(state.verified) },
-        after: { verifiedIds: [] },
-      })
+      await commit(tree, nextState)
       return cloneState(state)
     }),
-    updateNode: (id, input, options) => mutate(options, async (actor) => {
+    updateNode: (id, input) => mutate(async () => {
       if (!validIds.has(id)) throw new Error(`Unknown GWE node: ${id}`)
       const before = findNode(tree, id)
       if (before === null) throw new Error(`Unknown GWE node: ${id}`)
@@ -155,33 +111,19 @@ export async function createDataStore(paths: DataStorePaths): Promise<DataStore>
       const changedFields = changedContentFields(before, content)
       if (changedFields.length === 0) return mutationResult(document.revision, tree, state)
       const nextTree = parseTree(updateNodeContent(tree, id, content))
-      await commit(nextTree, state, {
-        actor,
-        action: "update",
-        nodeId: id,
-        summary: `Updated ${id}: ${changedFields.join(", ")}`,
-        before: nodeContent(before),
-        after: content,
-      })
+      await commit(nextTree, state)
       return mutationResult(document.revision, tree, state)
     }),
-    addChild: (parentId, input, options) => mutate(options, async (actor) => {
+    addChild: (parentId, input) => mutate(async () => {
       if (!validIds.has(parentId)) throw new Error(`Unknown GWE node: ${parentId}`)
       const content = parseEditableNode(input)
       const nodeId = nextChildId(tree, parentId)
       const child: GweNode = { id: nodeId, ...content }
       const nextTree = parseTree(appendChild(tree, parentId, child))
-      await commit(nextTree, state, {
-        actor,
-        action: "add",
-        nodeId,
-        parentId,
-        summary: `Added ${nodeId} under ${parentId}`,
-        after: child,
-      })
+      await commit(nextTree, state)
       return { ...mutationResult(document.revision, tree, state), nodeId }
     }),
-    removeNode: (id, options) => mutate(options, async (actor) => {
+    removeNode: (id) => mutate(async () => {
       if (id === tree.id) throw new Error("The proof tree root cannot be removed")
       if (!validIds.has(id)) throw new Error(`Unknown GWE node: ${id}`)
       const parentId = findParentId(tree, id)
@@ -195,14 +137,7 @@ export async function createDataStore(paths: DataStorePaths): Promise<DataStore>
       const nextState: VerificationState = verificationChanged
         ? { version: 1, updatedAt: new Date().toISOString(), verified: nextVerified }
         : state
-      await commit(nextTree, nextState, {
-        actor,
-        action: "remove",
-        nodeId: id,
-        parentId,
-        summary: `Removed ${id} and ${removedIds.length - 1} descendants`,
-        before: removedNode,
-      })
+      await commit(nextTree, nextState)
       return { ...mutationResult(document.revision, tree, state), parentId, removedIds }
     }),
   }
@@ -233,39 +168,11 @@ async function withFileLock<Result>(treePath: string, work: () => Promise<Result
   }
 }
 
-async function readActivities(path: string): Promise<MapActivity[]> {
-  let content: string
-  try {
-    content = await readFile(path, "utf8")
-  } catch (error) {
-    if (isErrorCode(error, "ENOENT")) return []
-    throw error
-  }
-  return content.split("\n").filter(Boolean).map((line, index) => {
-    try {
-      return JSON.parse(line) as MapActivity
-    } catch {
-      throw new Error(`Invalid activity entry at ${path}:${index + 1}`)
-    }
-  })
-}
-
-async function appendActivity(path: string, activity: MapActivity): Promise<void> {
-  await mkdir(dirname(path), { recursive: true })
-  await appendFile(path, `${JSON.stringify(activity)}\n`, "utf8")
-}
-
 async function writeJsonAtomically(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
   const temporaryPath = `${path}.tmp-${process.pid}`
   await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8")
   await rename(temporaryPath, path)
-}
-
-function assertExpectedRevision(expected: number | undefined, actual: number): void {
-  if (expected !== undefined && expected !== actual) {
-    throw new Error(`Revision conflict: expected ${expected}, latest is ${actual}. Read the map and human changes again before updating.`)
-  }
 }
 
 function snapshot(revision: number, tree: GweNode, verification: VerificationState): MapSnapshot {
@@ -278,11 +185,6 @@ function cloneState(state: VerificationState): VerificationState {
 
 function mutationResult(revision: number, tree: GweNode, verification: VerificationState): TreeMutationResult {
   return snapshot(revision, tree, verification)
-}
-
-function nodeContent(node: GweNode): EditableGweNode {
-  const { id: _id, children: _children, ...content } = node
-  return structuredClone(content)
 }
 
 function changedContentFields(before: GweNode, after: EditableGweNode): string[] {
