@@ -4,7 +4,7 @@ import type { DataStore } from "./data-store"
 import { parseEditableNode } from "./model"
 
 interface HttpAppOptions {
-  dataStore: DataStore
+  getDataStore(mapDirectory?: string | null): Promise<DataStore>
   publicRoot: string
 }
 
@@ -16,69 +16,18 @@ const staticFiles = new Map([
   ["/favicon.svg", ["favicon.svg", "image/svg+xml"]],
 ] as const)
 
-export function createHttpApp({ dataStore, publicRoot }: HttpAppOptions): (request: Request) => Promise<Response> {
+export function createHttpApp({ getDataStore, publicRoot }: HttpAppOptions): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
       const url = new URL(request.url)
 
       if (request.method === "GET" && url.pathname === "/healthz") {
-        return json({ ok: true })
+        return json({ ok: true, app: "pyramid-map", pid: process.pid })
       }
-      if (url.pathname.startsWith("/api/")) await dataStore.refresh()
-      if (request.method === "GET" && url.pathname === "/api/map") {
-        return json(dataStore.getSnapshot())
-      }
-      if (request.method === "GET" && url.pathname === "/api/tree") {
-        return json(dataStore.getTree())
-      }
-      if (request.method === "GET" && url.pathname === "/api/changes") {
-        const since = parseRevisionQuery(url.searchParams.get("since"))
-        if (since instanceof Response) return since
-        const actor = url.searchParams.get("actor")
-        if (actor !== null && actor !== "human" && actor !== "agent") {
-          return json({ error: "actor must be human or agent" }, 400)
-        }
-        return json({ revision: dataStore.getSnapshot().revision, changes: dataStore.getActivities(since, actor ?? undefined) })
-      }
-
-      const childMutationMatch = url.pathname.match(/^\/api\/tree\/([^/]+)\/children$/)
-      if (request.method === "POST" && childMutationMatch !== null) {
-        const parentId = decodeURIComponent(childMutationMatch[1])
-        if (!dataStore.hasNode(parentId)) return json({ error: `Unknown GWE node: ${parentId}` }, 404)
-        const content = await readEditableContent(request)
-        if (content instanceof Response) return content
-        return json(await dataStore.addChild(parentId, content, { actor: "human" }), 201)
-      }
-
-      const treeMutationMatch = url.pathname.match(/^\/api\/tree\/([^/]+)$/)
-      if (treeMutationMatch !== null) {
-        const id = decodeURIComponent(treeMutationMatch[1])
-        if (!dataStore.hasNode(id)) return json({ error: `Unknown GWE node: ${id}` }, 404)
-        if (request.method === "PUT") {
-          const content = await readEditableContent(request)
-          if (content instanceof Response) return content
-          return json(await dataStore.updateNode(id, content, { actor: "human" }))
-        }
-        if (request.method === "DELETE") {
-          if (id === dataStore.getTree().id) return json({ error: "The proof tree root cannot be removed" }, 400)
-          return json(await dataStore.removeNode(id, { actor: "human" }))
-        }
-      }
-
-      if (request.method === "GET" && url.pathname === "/api/verification") {
-        return json(dataStore.getVerification())
-      }
-      if (request.method === "DELETE" && url.pathname === "/api/verification") {
-        return json(await dataStore.resetVerification({ actor: "human" }))
-      }
-
-      const verificationMatch = url.pathname.match(/^\/api\/verification\/([^/]+)$/)
-      if (request.method === "PUT" && verificationMatch !== null) {
-        const id = decodeURIComponent(verificationMatch[1])
-        if (!dataStore.hasNode(id)) return json({ error: `Unknown GWE node: ${id}` }, 404)
-        const body = await request.json().catch(() => null)
-        if (!isVerificationUpdate(body)) return json({ error: "Body must be { verified: boolean }" }, 400)
-        return json(await dataStore.setVerified(id, body.verified, { actor: "human" }))
+      if (url.pathname.startsWith("/api/")) {
+        const dataStore = await getDataStore(url.searchParams.get("map"))
+        await dataStore.refresh()
+        return handleApiRequest(request, url, dataStore)
       }
 
       const staticFile = staticFiles.get(url.pathname)
@@ -102,6 +51,57 @@ export function createHttpApp({ dataStore, publicRoot }: HttpAppOptions): (reque
   }
 }
 
+async function handleApiRequest(request: Request, url: URL, dataStore: DataStore): Promise<Response> {
+  if (request.method === "GET" && url.pathname === "/api/map") {
+    return json(dataStore.getSnapshot())
+  }
+  if (request.method === "GET" && url.pathname === "/api/tree") {
+    return json(dataStore.getTree())
+  }
+
+  const childMutationMatch = url.pathname.match(/^\/api\/tree\/([^/]+)\/children$/)
+  if (request.method === "POST" && childMutationMatch !== null) {
+    const parentId = decodeURIComponent(childMutationMatch[1])
+    if (!dataStore.hasNode(parentId)) return json({ error: `Unknown GWE node: ${parentId}` }, 404)
+    const content = await readEditableContent(request)
+    if (content instanceof Response) return content
+    return json(await dataStore.addChild(parentId, content), 201)
+  }
+
+  const treeMutationMatch = url.pathname.match(/^\/api\/tree\/([^/]+)$/)
+  if (treeMutationMatch !== null) {
+    const id = decodeURIComponent(treeMutationMatch[1])
+    if (!dataStore.hasNode(id)) return json({ error: `Unknown GWE node: ${id}` }, 404)
+    if (request.method === "PUT") {
+      const content = await readEditableContent(request)
+      if (content instanceof Response) return content
+      return json(await dataStore.updateNode(id, content))
+    }
+    if (request.method === "DELETE") {
+      if (id === dataStore.getTree().id) return json({ error: "The proof tree root cannot be removed" }, 400)
+      return json(await dataStore.removeNode(id))
+    }
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/verification") {
+    return json(dataStore.getVerification())
+  }
+  if (request.method === "DELETE" && url.pathname === "/api/verification") {
+    return json(await dataStore.resetVerification())
+  }
+
+  const verificationMatch = url.pathname.match(/^\/api\/verification\/([^/]+)$/)
+  if (request.method === "PUT" && verificationMatch !== null) {
+    const id = decodeURIComponent(verificationMatch[1])
+    if (!dataStore.hasNode(id)) return json({ error: `Unknown GWE node: ${id}` }, 404)
+    const body = await request.json().catch(() => null)
+    if (!isVerificationUpdate(body)) return json({ error: "Body must be { verified: boolean }" }, 400)
+    return json(await dataStore.setVerified(id, body.verified))
+  }
+
+  return new Response("Not found", { status: 404 })
+}
+
 async function readEditableContent(request: Request) {
   const body = await request.json().catch(() => null)
   try {
@@ -120,11 +120,4 @@ function json(value: unknown, status = 200): Response {
 
 function isVerificationUpdate(value: unknown): value is { verified: boolean } {
   return typeof value === "object" && value !== null && "verified" in value && typeof value.verified === "boolean"
-}
-
-function parseRevisionQuery(value: string | null): number | Response {
-  if (value === null) return -1
-  const revision = Number(value)
-  if (!Number.isInteger(revision) || revision < -1) return json({ error: "since must be an integer of -1 or greater" }, 400)
-  return revision
 }

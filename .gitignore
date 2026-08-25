@@ -1,4 +1,4 @@
 node_modules/
 .DS_Store
-data/*.lock/
-data/*.tmp-*
+maps/*/*.lock/
+maps/*/*.tmp-*
