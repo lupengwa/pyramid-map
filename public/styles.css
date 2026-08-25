@@ -401,13 +401,14 @@ h1 {
 
 .node-title {
   display: block;
-  overflow: hidden;
+  overflow: visible;
   color: #51615a;
   font-size: 0.62rem;
   font-weight: 700;
   line-height: 1.17;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .map-node-root .node-title { color: #d2e7de; }
@@ -421,6 +422,27 @@ h1 {
   color: #fff;
   border-color: rgba(255, 255, 255, 0.28);
   background: rgba(255, 255, 255, 0.12);
+}
+
+.node-relationship {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px;
+  margin: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(115, 128, 121, 0.18);
+  color: #31443c;
+  background: color-mix(in srgb, var(--branch-color, var(--forest-2)) 8%, #fff);
+  font-size: 0.62rem;
+  line-height: 1.25;
+}
+
+.node-relationship strong {
+  color: var(--branch-color, var(--forest-2));
+  font: 850 0.52rem/1.35 "SFMono-Regular", Consolas, monospace;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
 }
 
 .node-gwe {
@@ -470,6 +492,77 @@ h1 {
 .card-style-signal:not(.map-node-root) .node-kicker,
 .card-style-signal:not(.map-node-root) .node-title {
   color: #fff;
+}
+
+.map-node.card-style-mental-model {
+  border-color: #356b82;
+  border-top-color: #8fc1d5;
+  background: linear-gradient(145deg, #173f4f, #102e3a);
+  box-shadow: 0 18px 38px rgba(25, 63, 79, 0.28);
+}
+
+.card-style-mental-model .node-open {
+  min-height: 74px;
+  align-items: start;
+  padding: 12px 16px 10px;
+  border-bottom-color: rgba(255, 255, 255, 0.16);
+}
+
+.card-style-mental-model .node-relationship {
+  border-bottom-color: rgba(255, 255, 255, 0.16);
+  color: #f0f8fb;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.card-style-mental-model .node-relationship strong {
+  color: #aedaea;
+}
+
+.card-style-mental-model .node-kicker {
+  padding-top: 4px;
+  color: #c8e8f4;
+}
+
+.card-style-mental-model .node-title {
+  color: #f4fbfd;
+  font: 750 0.94rem/1.24 Georgia, "Times New Roman", serif;
+  letter-spacing: -0.008em;
+}
+
+.map-node.card-style-mental-model .node-gwe {
+  display: block;
+  padding: 10px 16px 12px;
+}
+
+.card-style-mental-model .node-gwe > div {
+  display: none;
+}
+
+.card-style-mental-model .node-gwe > div:first-child {
+  display: grid;
+  grid-template-columns: 94px minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(185, 225, 239, 0.3);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.card-style-mental-model .node-gwe > div:first-child dt {
+  color: #aedaea;
+  font-size: 0.58rem;
+  line-height: 1.35;
+}
+
+.card-style-mental-model .node-gwe > div:first-child dd {
+  color: #f0f8fb;
+  font: 700 0.76rem/1.38 "SFMono-Regular", Consolas, monospace;
+}
+
+.card-style-mental-model .node-gwe code {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .node-gwe > div {
@@ -634,6 +727,34 @@ h1 {
   letter-spacing: 0.04em;
 }
 
+.detail-relationship {
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--branch-color, var(--blue)) 28%, #fff);
+  border-left: 4px solid var(--branch-color, var(--blue));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--branch-color, var(--blue)) 7%, #fff);
+}
+
+.detail-relationship[hidden] {
+  display: none;
+}
+
+.detail-relationship h3 {
+  margin: 0 0 5px;
+  color: var(--branch-color, var(--blue));
+  font: 850 0.64rem/1.3 "SFMono-Regular", Consolas, monospace;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.detail-relationship p {
+  margin: 0;
+  color: #273a32;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
 .detail-gwe {
   display: grid;
   gap: 12px;
@@ -796,6 +917,11 @@ h1 {
   font-weight: 900;
   letter-spacing: 0.07em;
   text-transform: uppercase;
+}
+
+.editor-field > small {
+  color: var(--muted);
+  font-size: 0.68rem;
 }
 
 .editor-field input,

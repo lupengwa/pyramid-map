@@ -110,6 +110,7 @@ function edgeMarkup(edge, isEntering) {
 }
 
 function nodeMarkup(node) {
+  const parentId = treeIndex.parents.get(node.id)
   const childCount = treeIndex.nodes.get(node.id).children?.length ?? 0
   const isExpanded = expandedIds.has(node.id)
   const isVerified = node.id in verification.verified
@@ -123,6 +124,9 @@ function nodeMarkup(node) {
   const proofRows = createNodeProofRows(node)
     .map((row) => `<div data-proof-field="${row.key}"><dt>${row.label}</dt><dd>${row.html}</dd></div>`)
     .join("")
+  const relationship = parentId === null
+    ? null
+    : node.relationship ?? `This node supports ${parentId}.`
 
   return `
     <article class="${classes}" id="${domId(node.id)}" data-node-id="${node.id}" style="--branch-color:${branchColorFor(node.id)};left:${node.x - node.width / 2}px;top:${node.y}px;width:${node.width}px;height:${node.height}px">
@@ -130,6 +134,7 @@ function nodeMarkup(node) {
         <span class="node-kicker"><span class="verification-dot" aria-hidden="true"></span>${node.id}</span>
         <span class="node-title">${node.title}</span>
       </button>
+      ${relationship === null ? "" : `<p class="node-relationship"><strong>To ${parentId}</strong><span>${escapeText(relationship)}</span></p>`}
       <dl class="node-gwe" aria-label="${node.id} proof">
         ${proofRows}
       </dl>
@@ -279,10 +284,16 @@ function renderDialog(id) {
   document.querySelector("#dialog-id").textContent = `${id} · capability proof`
   document.querySelector("#dialog-title").innerHTML = node.title
   document.querySelector("#dialog-path").textContent = proofPath(id).join("  /  ")
+  const relationshipPanel = document.querySelector("#dialog-relationship-panel")
+  relationshipPanel.hidden = parentId === null
+  relationshipPanel.style.setProperty("--branch-color", branchColorFor(id))
+  if (parentId !== null) {
+    document.querySelector("#dialog-relationship-title").textContent = `Relationship to ${parentId}`
+    document.querySelector("#dialog-relationship").textContent = node.relationship ?? `This node supports ${parentId}.`
+  }
   document.querySelector("#dialog-sections").innerHTML = createNodeProofRows(node)
     .map((section) => `<div data-detail-section="${section.key}"><dt>${section.label}</dt><dd>${section.html}</dd></div>`)
     .join("")
-  document.querySelector("#dialog-relationship").textContent = relationshipText(id, parentId, childIds)
 
   const badge = document.querySelector("#dialog-evidence")
   badge.className = `badge ${node.evidence}`
@@ -320,6 +331,13 @@ function openNodeEditor(mode, id) {
   document.querySelector("#editor-title").textContent = mode === "edit" ? "Edit capability proof" : "Add child capability"
   document.querySelector("#editor-node-id").textContent = mode === "edit" ? id : `${nextChildIdFor(node)} · generated when saved`
   document.querySelector("#editor-node-title").value = mode === "edit" ? node.title : ""
+  const relationshipRequired = mode === "add" || treeIndex.parents.get(id) !== null
+  const relationshipField = document.querySelector("#editor-relationship-field")
+  const relationshipInput = document.querySelector("#editor-relationship")
+  relationshipField.hidden = !relationshipRequired
+  relationshipInput.disabled = !relationshipRequired
+  relationshipInput.required = relationshipRequired
+  relationshipInput.value = mode === "edit" ? node.relationship ?? "" : ""
   document.querySelector("#editor-pattern").value = mode === "edit" ? node.pattern : "gwe-notes"
   document.querySelector("#editor-style").value = mode === "edit" ? node.style : "proof"
   document.querySelector("#editor-evidence").value = mode === "edit" ? node.evidence : "structural"
@@ -515,16 +533,6 @@ function setEditorError(message) {
   errorElement.textContent = message
 }
 
-function relationshipText(id, parentId, childIds) {
-  if (parentId === null) {
-    return `${id} is the root. Its conclusion is supported by ${childIds.join(", ")}. The root still requires independent human verification.`
-  }
-  const childFact = childIds.length === 0
-    ? "This is a leaf proof."
-    : `Its claim receives supporting facts from ${childIds.join(", ")}.`
-  return `${childFact} When ${id}'s stated result holds, that fact supports ${parentId}. Neither direction automatically marks another node verified.`
-}
-
 function proofPath(id) {
   const path = []
   let currentId = id
@@ -649,6 +657,14 @@ function plainText(html) {
   const template = document.createElement("template")
   template.innerHTML = html
   return template.content.textContent.trim()
+}
+
+function escapeText(value) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
 }
 
 function domId(id) {

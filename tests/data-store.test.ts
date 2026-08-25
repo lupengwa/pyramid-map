@@ -21,6 +21,7 @@ const root = {
   children: [{
     id: "G1",
     title: "A child result holds.",
+    relationship: "This gives G0 the child result it needs.",
     given: "The child precondition holds.",
     when: "The child receives input.",
     expect: "The child produces a result.",
@@ -32,6 +33,7 @@ const root = {
 
 const childInput = {
   title: "A manually added capability holds.",
+  relationship: "This gives its parent a capability it needs.",
   given: "The manual precondition holds.",
   when: "The human adds a child.",
   expect: "The child persists in <code>tree.json</code>.",
@@ -69,6 +71,14 @@ describe("editable proof store", () => {
     expect(result.nodeId).toBe("G1.1")
     expect(result.tree.children?.[0].children?.[0].id).toBe("G1.1")
     expect(JSON.parse(await readFile(treePath, "utf8")).root.children[0].children[0].id).toBe("G1.1")
+  })
+
+  test("requires a relationship when a child is added or edited", async () => {
+    const store = await createDataStore({ treePath, verificationPath })
+    const { relationship: _relationship, ...withoutRelationship } = childInput
+
+    await expect(store.addChild("G1", withoutRelationship)).rejects.toThrow("relationship to its parent")
+    await expect(store.updateNode("G1", withoutRelationship)).rejects.toThrow("relationship to its parent")
   })
 
   test("removes a subtree and its verification marks but protects G0", async () => {

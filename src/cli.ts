@@ -128,6 +128,7 @@ function summarizeNode(node: GweNode) {
   return {
     id: node.id,
     title: node.title,
+    relationship: node.relationship,
     pattern: node.pattern,
     style: node.style,
     sectionLabels: node.sections.map((section) => section.label),

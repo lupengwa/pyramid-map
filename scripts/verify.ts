@@ -37,6 +37,10 @@ try {
   const pageSource = await page.text()
   assert(pageSource.includes('id="map-viewport"'), "The HTML route is missing the interactive map entrance")
   assert(pageSource.includes('id="map-name"') && pageSource.includes('id="map-answer"'), "The HTML route cannot identify different map tabs")
+  assert(pageSource.includes('<option value="mental-model">Mental model</option>'), "The editor cannot preserve the mental-model card style")
+  assert(pageSource.includes('id="editor-relationship"'), "The editor cannot author a child-to-parent relationship")
+  assert(pageSource.includes('id="dialog-relationship-panel"') && pageSource.includes('id="evidence-title">Evidence</h3>'), "The detail view does not separate the parent relationship from evidence")
+  assert(!pageSource.includes("Proof context"), "The detail view still labels structural relationships as proof context")
   const health = await app(new Request("http://local.test/healthz"))
   assert(health.status === 200 && (await health.json()).app === "pyramid-map", "The shared-server health identity is unavailable")
   const treeResponse = await app(new Request("http://local.test/api/tree"))
@@ -47,7 +51,15 @@ try {
   assert(mapModel.status === 200, "The browser map model is unavailable")
   const favicon = await app(new Request("http://local.test/favicon.svg"))
   assert(favicon.status === 200, "The browser favicon is unavailable")
+  const styles = await readFile(join(appRoot, "public/styles.css"), "utf8")
+  const appSource = await readFile(join(appRoot, "public/app.js"), "utf8")
+  assert(styles.includes(".map-node.card-style-mental-model"), "The mental-model card has no visual treatment")
+  assert(styles.includes(".node-relationship") && appSource.includes('class="node-relationship"'), "Child cards do not expose their relationship to the parent")
+  assert(styles.includes(".detail-relationship") && appSource.includes("relationshipPanel.hidden = parentId === null"), "Child details do not promote the parent relationship near the top")
+  assert(styles.includes("overflow-wrap: anywhere") && styles.includes("white-space: normal"), "Node titles can still be visually truncated")
   console.log("ready: the local HTTP app identifies the shared server and serves map-specific browser and proof surfaces")
+  console.log("ready: full node titles wrap and mental-model cards expose their first section at a glance")
+  console.log("ready: every child detail promotes its parent relationship above node sections and keeps evidence separate")
 
   const launcher = await readFile(join(appRoot, "templates/map-launcher.command"), "utf8")
   assert(launcher.includes('bin/pyramid-map --map "$MAP_DIRECTORY" open'), "Generated launchers do not use the shared-server open path")
@@ -59,7 +71,9 @@ try {
     .filter((edge) => edge.parentId === "G0")
     .map((edge) => edge.childId)
   assert(JSON.stringify(rootChildren) === JSON.stringify(["G1", "G2", "G3", "G4"]), "G0 does not visibly connect to all four direct children")
+  assert(defaultMap.nodes.slice(1).every((node) => typeof node.relationship === "string" && node.relationship.length > 0), "A visible child is missing its authored parent relationship")
   console.log("ready: the default map explicitly connects G0 to G1, G2, G3, and G4")
+  console.log("ready: every visible child states its concise contribution to the parent")
 
   for (const edge of defaultMap.edges) {
     const branchPath = createMindmapBranchPath(edge)
@@ -99,6 +113,7 @@ try {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       title: editableNode.title,
+      relationship: editableNode.relationship,
       pattern: editableNode.pattern,
       style: "editorial",
       sections: editableNode.sections.map((section) => section.key === "notes"
@@ -112,6 +127,7 @@ try {
 
   const childContent = {
     title: "A temporary authored child persists.",
+    relationship: "This gives G0 a temporary capability for the authoring check.",
     given: "The authoring API is available.",
     when: "A child is added in the verification sandbox.",
     expect: "The child receives a generated hierarchical ID.",
