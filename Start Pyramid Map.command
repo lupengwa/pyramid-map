@@ -1,8 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 
-MAP_DIRECTORY=${0:A:h}
-PYRAMID_MAP_DIRECTORY="__PYRAMID_MAP_DIRECTORY__"
+APP_DIRECTORY=${0:A:h}
+cd "$APP_DIRECTORY"
 
 if command -v bun >/dev/null 2>&1; then
   BUN_EXECUTABLE=$(command -v bun)
@@ -13,5 +13,4 @@ else
   exit 1
 fi
 
-cd "$PYRAMID_MAP_DIRECTORY"
-exec "$BUN_EXECUTABLE" run bin/pyramid-map --map "$MAP_DIRECTORY" open
+exec "$BUN_EXECUTABLE" run start

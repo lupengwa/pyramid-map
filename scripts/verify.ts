@@ -1,44 +1,37 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { createDataStore } from "../src/data-store"
 import { createHttpApp } from "../src/http-app"
-import { compareMaps } from "../src/map-diff"
-import { collectNodeIds, parseMapDocument } from "../src/model"
+import { collectNodeIds } from "../src/model"
 import { createMapFitTransform, createMapLayout, createMindmapBranchPath, createNodeProofRows, resolveNodeClick, visibleTree } from "../public/map-model.js"
 
 const appRoot = join(import.meta.dir, "..")
 const temporaryRoot = await mkdtemp(join(tmpdir(), "dsh-gwe-verify-"))
 const treePath = join(temporaryRoot, "tree.json")
 const verificationPath = join(temporaryRoot, "verification.json")
-const agentBasePath = join(temporaryRoot, ".pyramid-map", "agent-base.json")
+const activityPath = join(temporaryRoot, "activity.jsonl")
 
 try {
-  const bundledTree = await readFile(join(appRoot, "maps/native-dsh-web-path/tree.json"), "utf8")
-  await mkdir(join(temporaryRoot, ".pyramid-map"))
-  await writeFile(treePath, bundledTree, "utf8")
-  await writeFile(agentBasePath, bundledTree, "utf8")
+  await writeFile(treePath, await readFile(join(appRoot, "data/tree.json"), "utf8"), "utf8")
   await writeFile(verificationPath, '{"version":1,"updatedAt":null,"verified":{}}\n', "utf8")
   const dataStore = await createDataStore({
     treePath,
     verificationPath,
+    activityPath,
   })
   const nodeIds = collectNodeIds(dataStore.getTree())
   assert(nodeIds.size === 22, `Expected 22 proof nodes, found ${nodeIds.size}`)
-  console.log("ready: the bundled presentation contains one valid 22-node proof tree and matching agent baseline")
+  console.log("ready: data/tree.json contains one valid 22-node proof tree")
 
   const app = createHttpApp({
-    getDataStore: async () => dataStore,
+    dataStore,
     publicRoot: join(appRoot, "public"),
   })
   const page = await app(new Request("http://local.test/"))
   assert(page.status === 200, `Expected the HTML route to return 200, received ${page.status}`)
-  const pageSource = await page.text()
-  assert(pageSource.includes('id="map-viewport"'), "The HTML route is missing the interactive map entrance")
-  assert(pageSource.includes('id="map-name"') && pageSource.includes('id="map-answer"'), "The HTML route cannot identify different map tabs")
-  const health = await app(new Request("http://local.test/healthz"))
-  assert(health.status === 200 && (await health.json()).app === "pyramid-map", "The shared-server health identity is unavailable")
+  assert((await page.text()).includes('id="map-viewport"'), "The HTML route is missing the interactive map entrance")
   const treeResponse = await app(new Request("http://local.test/api/tree"))
   assert(treeResponse.status === 200, "The tree API is unavailable")
   const snapshotResponse = await app(new Request("http://local.test/api/map"))
@@ -47,12 +40,7 @@ try {
   assert(mapModel.status === 200, "The browser map model is unavailable")
   const favicon = await app(new Request("http://local.test/favicon.svg"))
   assert(favicon.status === 200, "The browser favicon is unavailable")
-  console.log("ready: the local HTTP app identifies the shared server and serves map-specific browser and proof surfaces")
-
-  const launcher = await readFile(join(appRoot, "templates/map-launcher.command"), "utf8")
-  assert(launcher.includes('bin/pyramid-map --map "$MAP_DIRECTORY" open'), "Generated launchers do not use the shared-server open path")
-  assert(!launcher.includes("server.ts --map"), "Generated launchers still bind one server per map")
-  console.log("ready: every generated launcher reuses one server and opens its destination as a separate tab")
+  console.log("ready: the local HTTP app serves its browser entrance, visual assets, map model, and proof API")
 
   const defaultMap = createMapLayout(visibleTree(dataStore.getTree(), new Set(["G0"]), null))
   const rootChildren = defaultMap.edges
@@ -130,15 +118,11 @@ try {
   const removed = await app(new Request("http://local.test/api/tree/G5", { method: "DELETE" }))
   assert(removed.status === 200, `Expected subtree removal to return 200, received ${removed.status}`)
   assert((await removed.json()).removedIds.includes("G5"), "The remove response did not report its deleted node")
-  const humanComparison = await compareFiles(agentBasePath, treePath)
-  assert(!humanComparison.inSync, "The agent baseline did not expose the browser-authored map difference")
-  assert(humanComparison.differences.some((difference) => difference.type === "update" && difference.nodeId === "G4"), "The semantic diff missed the browser-authored G4 update")
-  console.log("ready: browser edits change tree.json while agent-base.json preserves the prior accepted map")
-
-  const acceptedTree = await readFile(treePath, "utf8")
-  await writeFile(agentBasePath, acceptedTree, "utf8")
-  assert((await compareFiles(agentBasePath, treePath)).inSync, "An agent-authored map did not return tree.json and agent-base.json to the same state")
-  console.log("ready: an agent can accept its completed map by writing identical JSON to current and baseline files")
+  const humanChanges = await app(new Request("http://local.test/api/changes?since=0&actor=human"))
+  const humanChangeBody = await humanChanges.json()
+  assert(humanChangeBody.changes.length === 3, "The HTTP API did not expose all three human content edits")
+  assert(humanChangeBody.changes.every((change: any) => change.actor === "human"), "A browser edit was not recorded as human")
+  console.log("ready: flexible node edits, child creation, subtree removal, and human authorship persist through the HTTP API")
 
   const marked = await app(new Request("http://local.test/api/verification/G0", {
     method: "PUT",
@@ -152,12 +136,13 @@ try {
   const reopenedStore = await createDataStore({
     treePath,
     verificationPath,
+    activityPath,
   })
   assert("G0" in reopenedStore.getVerification().verified, "A fresh store did not reopen the saved G0 mark")
   console.log("ready: human marks persist in a separate file and reopen in a fresh store")
 
   const reopenedApp = createHttpApp({
-    getDataStore: async () => reopenedStore,
+    dataStore: reopenedStore,
     publicRoot: join(appRoot, "public"),
   })
   const reset = await reopenedApp(new Request("http://local.test/api/verification", { method: "DELETE" }))
@@ -167,16 +152,11 @@ try {
   assert(typeof resetFile.updatedAt === "string", "Reset did not record its time")
   console.log("ready: reset clears all marks while preserving the verification file")
 
-  console.log("READY: Pyramid Map can go live")
+  console.log("READY: the DSH Web pyramid map can go live")
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true })
 }
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
-}
-
-async function compareFiles(basePath: string, currentPath: string) {
-  const [base, current] = await Promise.all([readFile(basePath, "utf8"), readFile(currentPath, "utf8")])
-  return compareMaps(parseMapDocument(JSON.parse(base)).root, parseMapDocument(JSON.parse(current)).root)
 }

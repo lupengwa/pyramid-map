@@ -1,155 +1,152 @@
 # Pyramid Map
 
-Pyramid Map is a local web renderer and editor for shared human-agent proof trees.
-It presents one conclusion at the top, supporting claims below it, and detailed evidence in deeper branches.
-GWE plus Notes is the default card pattern, while every node may define its own ordered sections and visual style.
+Pyramid Map is a local, shared human-agent tool for editing a zoomable, top-down proof tree.
+The bundled map demonstrates the native DSH Web path.
+GWE plus Notes is the default card pattern, but every node can own a different ordered section pattern and visual style.
+The map, human verification state, and human-agent activity history are separate workspace files.
+Every verification change is saved on the server before the UI turns green.
+Node edits and tree-structure changes are also saved before the canvas updates.
 
-The bundled `maps/native-dsh-web-path/` presentation demonstrates the complete format.
+## Start the app
 
-## Start the bundled map
+Double-click `Start Pyramid Map.command` in Finder.
+The launcher runs the verification gate, starts the local server, and opens the app in the default browser.
+It resolves Bun from the terminal path or the standard `~/.bun/bin/bun` installation.
+Keep the terminal window open while using the app, then press `Ctrl-C` there to stop it.
 
-Double-click:
-
-```text
-maps/native-dsh-web-path/Native DSH Web Path.command
-```
-
-The launcher verifies and starts one shared local server when needed, then opens this presentation in its own browser tab.
-Later launchers reuse that server, so different maps do not compete for the same port.
-The launcher terminal may close after the tab opens.
-
-The equivalent terminal path is:
+For a fresh checkout, use:
 
 ```sh
+git clone https://github.com/lupengwa/pyramid-map.git
+cd pyramid-map
 bun install
 bun run start
 ```
 
-The shared server uses `http://127.0.0.1:4318` by default, while each tab URL carries its own destination map path.
-Set `PYRAMID_MAP_PORT` when another service occupies that port.
-Run `bun run map stop` to stop the shared server.
+The default URL is `http://127.0.0.1:4318`.
+Set `DSH_GWE_PORT` when that port is already occupied.
+`DSH_GWE_TREE_PATH`, `DSH_GWE_VERIFICATION_PATH`, and `DSH_GWE_ACTIVITY_PATH` can point an isolated test server at temporary data copies.
 
-## Presentation contract
+Opening `public/index.html` directly is not a supported path because a plain browser file cannot write `data/verification.json` safely.
 
-Every generated presentation is a self-contained data directory:
+## 1. Load the data files
 
-```text
-map-name/
-├── tree.json
-├── verification.json
-├── .pyramid-map/
-│   └── agent-base.json
-└── Map Name.command
-```
+`server.ts` is the production entry point and the code table of contents.
+It first creates the data store in `src/data-store.ts`.
 
-The `.command` filename is the human-facing map name.
-Clicking it must call `pyramid-map --map <containing-directory> open` so the shared server opens that destination in a separate tab.
-The requested destination is the one durable map directory.
-Generated maps do not need a second copy under this repository's `maps/` folder.
+`data/tree.json` owns all card content, presentation tokens, revisions, and parent-child relationships.
+The legacy GWE shape remains readable and normalizes to a `gwe-notes` pattern with Proof styling.
+The first later mutation writes the revisioned version 2 document shape.
+Each normalized node has a unique ID, title, pattern name, style, one to eight ordered sections, evidence, and source.
+Section keys are lowercase slugs while labels and bodies are authored per node.
+Existing IDs are immutable through the UI.
+New child IDs are generated from their parent, such as `G2.5` or `G2.1.1`.
+Manually authored text supports plain text and the existing safe `<code>` inline markup only.
 
-### Current map and agent baseline
+`data/verification.json` owns current human verification state.
+Marking a node adds its ID and verification timestamp.
+Unmarking removes that ID.
+Reset empties the verified-node map, preserves the file, and updates its timestamp.
 
-`tree.json` is the current map and the browser's only content-write target.
+`data/activity.jsonl` is the append-only human-agent change stream.
+Every content, structure, and verification mutation records its revision, actor, time, summary, and relevant before/after state.
+This history lets an agent distinguish a human clarification from its own earlier edits.
 
-`.pyramid-map/agent-base.json` is the last map the agent generated or explicitly accepted.
-Before changing an existing presentation, the agent compares the normalized baseline tree with the current tree.
-Added, removed, moved, and updated nodes are cumulative evidence of human intention since the agent last completed the map.
+`src/model.ts` owns the file shapes and validates them before the server becomes live.
+Unknown IDs in an older verification file are ignored so a changed proof tree can still start safely.
 
-When an agent changes the map, it first writes and validates the final `tree.json`.
-After validation, it writes the exact same JSON bytes to `.pyramid-map/agent-base.json`.
-An agent-completed map therefore has identical current and baseline files.
+Tree and verification writes use a temporary sibling file followed by an atomic rename.
+One in-process queue plus a cross-process lock serializes browser and CLI mutations.
+Agent mutations require an expected revision, so a newer human edit causes a conflict instead of being overwritten.
+Deleting a node removes its complete subtree and cleans every removed verification mark.
+The root G0 cannot be deleted.
 
-`verification.json` is human-owned review state.
-Content edits do not change it, and verification edits do not change the tree revision.
+## 2. Serve the UI and data API
 
-No action log is required.
+After the data loads, `server.ts` gives the store to `src/http-app.ts`.
+The HTTP app serves the four browser assets and these local endpoints:
 
-### Tree schema
+- `GET /api/map` reads the latest revision, tree, and verification state.
+- `GET /api/tree` reads the proof tree.
+- `GET /api/changes?since=:revision&actor=:actor` reads later human or agent activity.
+- `PUT /api/tree/:id` edits one node while preserving its ID and children.
+- `POST /api/tree/:parentId/children` appends a child with a generated ID.
+- `DELETE /api/tree/:id` removes a non-root subtree and its verification marks.
+- `GET /api/verification` reads human marks.
+- `PUT /api/verification/:id` marks or unmarks one node.
+- `DELETE /api/verification` resets all marks.
+- `GET /healthz` reports that the server is available.
 
-The current schema is a version 2 document:
+`public/index.html` owns the conclusion-first page structure.
+`public/map-model.js` derives the visible branch set, exposes each node's ordered sections, calculates the top-down node geometry, and emits one smooth top-down branch for every visible parent-child relationship.
+`public/app.js` fetches the data sources, renders the map, manages zoom and pan, opens full details, focuses branches, and sends user actions back to the API.
+The map model keeps translation on an outer pan layer and magnification on the inner layout, so the browser redraws text at every zoom level instead of enlarging a cached text texture.
+`public/styles.css` owns the compact session rail, full proof cards, detail drawer, green verified state, full-screen canvas, and keyboard focus treatment.
 
-```json
-{
-  "version": 2,
-  "revision": 1,
-  "root": {
-    "id": "G0",
-    "title": "The main conclusion holds.",
-    "pattern": "gwe-notes",
-    "style": "proof",
-    "sections": [
-      { "key": "given", "label": "Given", "body": "Supporting conditions hold." },
-      { "key": "when", "label": "When", "body": "The capability is exercised." },
-      { "key": "expect", "label": "Expect", "body": "The conclusion follows." },
-      { "key": "notes", "label": "Notes", "body": "Relevant qualification." }
-    ],
-    "evidence": "source",
-    "source": "path/to/source.ts:42",
-    "children": []
-  }
-}
-```
+The default view expands only G0, so G0 and its four direct children fit together as two complete layers on a MacBook screen.
+Every default card shows Given, When, Expect, and Notes directly; its capability title is secondary context.
+The editor can rename, reorder, add, and remove sections and select Proof, Editorial, or Signal card styling.
+The title and verification chrome use compact single-line bands so the proof content receives most of each card.
+Clicking anywhere on a card opens its detail and action drawer; the branch-fold control remains an independent action.
+The root starts near the canvas top instead of vertically centering unused pyramid space.
+Each child reports its hidden descendant count and can expand independently.
+Each first-level proof branch has a stable color inherited by its descendants, while green remains reserved for human verification.
+Fold counts sit on the outgoing branch junction, and newly revealed branches draw outward without scaling the card text.
+When one node has more than five children, the children remain in one truthful sibling band at readable card width.
+The canvas presents a five-card window with a horizontal-pan hint instead of wrapping children into a misleading second hierarchy level or shrinking their proof text.
+`Expand all` shows the complete 22-node topology, while `Overview` restores G0 and its four direct children.
 
-Each node requires a unique ID, title, pattern, style, one to eight ordered sections, evidence kind, and source.
-The supported styles are `proof`, `editorial`, and `signal`.
-The supported evidence kinds are `structural`, `source`, and `e2e`.
-Section bodies support plain text and balanced `<code>...</code>` inline markup.
-The legacy Given, When, Expect, and Notes fields remain readable and normalize to the version 2 node model.
+Clicking anywhere on a node card opens the larger reading view with evidence, source entrance, and proof-relationship context in the detail drawer.
+The drawer also owns verification, child expansion, and branch focus actions.
+`Edit node` opens the full proof editor with the current raw text preserved.
+`Add child` uses the same editor and previews the generated child ID.
+`Remove node` requires confirmation and states how many descendants will also be removed.
 
-## Production flow
+Drag or use a trackpad to pan.
+Pinch, the `+` and `-` buttons, or the matching keyboard keys change zoom.
+`0` fits the visible map, `F` focuses the selected branch, `E` expands or collapses it, and the arrow keys move selection geometrically.
 
-`server.ts` is the web production entry point and owns the one loopback server shared by every open map.
-It supplies a default presentation for direct starts, while each browser tab selects its destination through the `map` URL parameter.
+The browser never treats evidence badges as human verification.
+A parent never turns green merely because its children are green.
 
-`src/map-store-registry.ts` lazily creates one data store per absolute destination path.
-This keeps map state isolated even when multiple tabs and agents use the same server.
+## 3. Use the agent path
 
-`src/shared-server.ts` owns startup locking, health detection, detached process lifetime, map URLs, and clean shutdown.
-Concurrent launchers either start the server once or reuse the ready process.
+`bin/pyramid-map` is the stable agent boundary used by the `pyramid-html` skill.
+It always opens the data files again, so each invocation reads the latest browser edits.
+Its stdout is TOON and its mutation input accepts JSON or a `.toon` file.
 
-`src/data-store.ts` owns browser edits, generated child IDs, verification, atomic JSON writes, and the cross-process map lock.
-Browser content mutations increment the tree revision.
-Verification mutations write only `verification.json`.
-
-`src/http-app.ts` serves the browser assets and resolves every tree and verification API request against the map selected by that tab.
-The server binds only to `127.0.0.1`.
-
-`public/map-model.js` derives visible branches, card rows, geometry, and smooth parent-child paths.
-`public/app.js` renders the map, handles zoom and pan, opens node details, and saves human edits.
-`public/styles.css` owns the compact two-level default layout, card styles, verified state, and editor.
-
-`bin/pyramid-map` is the agent inspection entrance.
-Its stdout uses TOON and its default map is `maps/native-dsh-web-path/`.
+Read the concise map or one complete node:
 
 ```sh
 bun run map
-bun run map --map /path/to/map-name open
-bun run map stop
-bun run map view G2
-bun run map diff --full
-bun run map diff --full --map /path/to/map-name
+bun run map view G2 --full
 ```
 
-`src/map-diff.ts` compares stable node IDs and reports additions, removals, parent moves, and content updates.
-The diff ignores verification because verification is not map content.
-
-## Create another presentation
-
-Create the map directly in the requested destination directory with `tree.json`, `verification.json`, and `.pyramid-map/agent-base.json`.
-Initially, write identical JSON to the current and baseline files.
-Keep this destination as the sole durable copy.
-
-Copy `templates/map-launcher.command` into the destination.
-Rename it to the human-facing map name and replace `__PYRAMID_MAP_DIRECTORY__` with the absolute path to this repository.
-Keep the launcher executable.
+When continuing work, inspect human edits after the last revision the agent understood:
 
 ```sh
-chmod +x "/path/to/map-name/Map Name.command"
+bun run map changes --since 12 --actor human --full
 ```
 
-The user can then click the named launcher to open that map in its own tab on the shared server.
+Update only from the revision just read:
 
-## Verification gate
+```sh
+bun run map update G2 --input /tmp/g2-edit.json --expected-revision 14
+bun run map add-child G2 --input /tmp/new-child.json --expected-revision 15
+bun run map remove G2.5 --confirm G2.5 --expected-revision 16
+```
+
+Each input supplies `title`, `pattern`, `style`, ordered `sections`, `evidence`, and `source`.
+If a human changes the map after the agent reads it, the mutation fails with a revision conflict.
+The agent then reads the latest map and human activity before rebuilding its proposed edit.
+
+## 4. Publish the local app URL
+
+Once the server is listening, `server.ts` prints the local URL.
+The normal `bun run start` path passes `--open`, so the production entry opens that URL in the default browser.
+The server binds only to `127.0.0.1` and is not exposed to the local network.
+
+## 5. Verify before going live
 
 Run:
 
@@ -157,29 +154,41 @@ Run:
 bun run verify
 ```
 
-The gate validates schemas, current-versus-baseline behavior, tree mutations, human verification, branch relationships, compact layout, wide fan-out, CLI output, browser assets, per-tab map isolation, and shared-server launcher reuse.
-All mutation checks run against temporary files.
-The bundled map and its verification state remain unchanged.
+The gate validates the legacy and flexible tree schemas, proves that G0 emits four explicit smooth child branches, checks that both default levels expose all four default proof rows, serves the real browser assets, edits a styled node, creates and removes a child, records human activity, writes a mark to temporary data files, reopens those files as a fresh store, and resets verification.
+It does not modify `data/verification.json`.
+It also does not modify `data/tree.json` because every mutation check runs against a temporary copy.
 
-`bun run start` always runs this gate before starting the server.
+`bun run start` always runs this gate before launching the server.
+If an essential check fails, the browser app does not start.
 
-## Repository map
+## File map
 
 ```text
 pyramid-map/
-├── server.ts                         Web production entry
-├── bin/pyramid-map                   Agent inspection entrance
+├── Start Pyramid Map.command Double-click launcher
+├── server.ts               Production entry and flow map
+├── bin/
+│   └── pyramid-map         TOON CLI for latest reads and revision-safe agent edits
 ├── src/
-│   ├── cli.ts                        TOON read, view, and diff commands
-│   ├── data-store.ts                 Browser mutation and persistence seam
-│   ├── http-app.ts                   Local web and JSON API
-│   ├── map-diff.ts                   Semantic baseline comparison
-│   ├── map-store-registry.ts         Per-destination data-store isolation
-│   ├── model.ts                      Map and verification validation
-│   └── shared-server.ts              One-server lifecycle and map tab URLs
-├── public/                           Browser UI and renderer
-├── maps/native-dsh-web-path/         Bundled clickable presentation
-├── templates/map-launcher.command    Launcher template for generated maps
-├── scripts/verify.ts                 Essential acceptance gate
-└── tests/                             Behavioral test suite
+│   ├── cli.ts              Agent command interface and compact/full projections
+│   ├── data-store.ts       Revisioned browser/agent mutation seam and activity log
+│   ├── http-app.ts         Browser assets and local map API
+│   └── model.ts            Flexible card and verification validation
+├── data/
+│   ├── tree.json           Proof definition
+│   ├── verification.json   Human-owned verification state
+│   └── activity.jsonl      Append-only human-agent mutation history
+├── public/
+│   ├── index.html          Conclusion-first document structure
+│   ├── map-model.js        Visible proof rows, geometry, and explicit edges
+│   ├── app.js              Canvas interaction, details, focus, and user actions
+│   ├── styles.css          Compact nodes, full-screen map, editor, and drawer
+│   └── favicon.svg         Local browser identity
+├── scripts/verify.ts       Essential acceptance gate
+└── tests/
+    ├── model.test.ts       Focused data-schema checks
+    ├── data-store.test.ts  Durable edit, add, remove, and markup-safety checks
+    ├── cli.test.ts         TOON output, human-diff, and revision-conflict checks
+    ├── map-model.test.ts   Proof-card, parent-child, and branch-focus checks
+    └── map-surface.test.ts Zoom rendering ownership checks
 ```

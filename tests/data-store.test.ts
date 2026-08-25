@@ -8,6 +8,7 @@ import { createDataStore } from "../src/data-store"
 let temporaryRoot: string
 let treePath: string
 let verificationPath: string
+let activityPath: string
 
 const root = {
   id: "G0",
@@ -44,6 +45,7 @@ beforeEach(async () => {
   temporaryRoot = await mkdtemp(join(tmpdir(), "dsh-gwe-store-test-"))
   treePath = join(temporaryRoot, "tree.json")
   verificationPath = join(temporaryRoot, "verification.json")
+  activityPath = join(temporaryRoot, "activity.jsonl")
   await writeFile(treePath, `${JSON.stringify(root, null, 2)}\n`, "utf8")
   await writeFile(verificationPath, '{"version":1,"updatedAt":null,"verified":{}}\n', "utf8")
 })
@@ -54,7 +56,7 @@ afterEach(async () => {
 
 describe("editable proof store", () => {
   test("updates node content and persists it to the tree file", async () => {
-    const store = await createDataStore({ treePath, verificationPath })
+    const store = await createDataStore({ treePath, verificationPath, activityPath })
     const result = await store.updateNode("G1", { ...childInput, title: "Edited capability." })
 
     expect(result.tree.children?.[0].title).toBe("Edited capability.")
@@ -63,7 +65,7 @@ describe("editable proof store", () => {
   })
 
   test("adds a child with a generated hierarchical ID", async () => {
-    const store = await createDataStore({ treePath, verificationPath })
+    const store = await createDataStore({ treePath, verificationPath, activityPath })
     const result = await store.addChild("G1", childInput)
 
     expect(result.nodeId).toBe("G1.1")
@@ -72,7 +74,7 @@ describe("editable proof store", () => {
   })
 
   test("removes a subtree and its verification marks but protects G0", async () => {
-    const store = await createDataStore({ treePath, verificationPath })
+    const store = await createDataStore({ treePath, verificationPath, activityPath })
     const added = await store.addChild("G1", childInput)
     await store.setVerified("G1", true)
     await store.setVerified(added.nodeId, true)
@@ -88,7 +90,7 @@ describe("editable proof store", () => {
   })
 
   test("rejects executable HTML in manually authored proof text", async () => {
-    const store = await createDataStore({ treePath, verificationPath })
+    const store = await createDataStore({ treePath, verificationPath, activityPath })
 
     await expect(store.updateNode("G1", {
       ...childInput,
@@ -96,13 +98,24 @@ describe("editable proof store", () => {
     })).rejects.toThrow("only supports plain text and <code>")
   })
 
-  test("keeps verification changes out of the content revision", async () => {
-    const store = await createDataStore({ treePath, verificationPath })
-    const treeBefore = await readFile(treePath, "utf8")
+  test("records human and agent changes and rejects stale agent revisions", async () => {
+    const store = await createDataStore({ treePath, verificationPath, activityPath })
+    await store.updateNode("G1", { ...childInput, title: "Human clarified capability." }, { actor: "human" })
 
-    await store.setVerified("G1", true)
+    const humanChanges = store.getActivities(0, "human")
+    expect(humanChanges).toHaveLength(1)
+    expect(humanChanges[0]).toMatchObject({ revision: 1, actor: "human", action: "update", nodeId: "G1" })
+    expect(humanChanges[0].before).toBeDefined()
+    expect(humanChanges[0].after).toBeDefined()
 
-    expect(store.getSnapshot().revision).toBe(0)
-    expect(await readFile(treePath, "utf8")).toBe(treeBefore)
+    await store.addChild("G1", childInput, { actor: "agent", expectedRevision: 1 })
+    expect(store.getSnapshot().revision).toBe(2)
+    await expect(store.setVerified("G1", true, { actor: "agent", expectedRevision: 1 })).rejects.toThrow("Revision conflict")
+
+    const persistedActivities = (await readFile(activityPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line))
+    expect(persistedActivities.map(({ actor, revision }) => ({ actor, revision }))).toEqual([
+      { actor: "human", revision: 1 },
+      { actor: "agent", revision: 2 },
+    ])
   })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import tree from "../maps/native-dsh-web-path/tree.json"
+import tree from "../data/tree.json"
 import { createMapLayout, createMindmapBranchPath, createNodeProofRows, resolveNodeClick, visibleTree } from "../public/map-model.js"
 
 describe("interactive proof map", () => {
