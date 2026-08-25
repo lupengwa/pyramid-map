@@ -284,10 +284,16 @@ function renderDialog(id) {
   document.querySelector("#dialog-id").textContent = `${id} · capability proof`
   document.querySelector("#dialog-title").innerHTML = node.title
   document.querySelector("#dialog-path").textContent = proofPath(id).join("  /  ")
+  const relationshipPanel = document.querySelector("#dialog-relationship-panel")
+  relationshipPanel.hidden = parentId === null
+  relationshipPanel.style.setProperty("--branch-color", branchColorFor(id))
+  if (parentId !== null) {
+    document.querySelector("#dialog-relationship-title").textContent = `Relationship to ${parentId}`
+    document.querySelector("#dialog-relationship").textContent = node.relationship ?? `This node supports ${parentId}.`
+  }
   document.querySelector("#dialog-sections").innerHTML = createNodeProofRows(node)
     .map((section) => `<div data-detail-section="${section.key}"><dt>${section.label}</dt><dd>${section.html}</dd></div>`)
     .join("")
-  document.querySelector("#dialog-relationship").textContent = relationshipText(node, parentId, childIds)
 
   const badge = document.querySelector("#dialog-evidence")
   badge.className = `badge ${node.evidence}`
@@ -525,13 +531,6 @@ function setEditorError(message) {
   const errorElement = document.querySelector("#editor-error")
   errorElement.hidden = message === ""
   errorElement.textContent = message
-}
-
-function relationshipText(node, parentId, childIds) {
-  if (parentId === null) {
-    return `${node.id} is the root. Its conclusion is supported by ${childIds.join(", ")}. The root still requires independent human verification.`
-  }
-  return node.relationship ?? `This node supports ${parentId}.`
 }
 
 function proofPath(id) {

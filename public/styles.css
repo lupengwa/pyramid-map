@@ -727,6 +727,34 @@ h1 {
   letter-spacing: 0.04em;
 }
 
+.detail-relationship {
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--branch-color, var(--blue)) 28%, #fff);
+  border-left: 4px solid var(--branch-color, var(--blue));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--branch-color, var(--blue)) 7%, #fff);
+}
+
+.detail-relationship[hidden] {
+  display: none;
+}
+
+.detail-relationship h3 {
+  margin: 0 0 5px;
+  color: var(--branch-color, var(--blue));
+  font: 850 0.64rem/1.3 "SFMono-Regular", Consolas, monospace;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.detail-relationship p {
+  margin: 0;
+  color: #273a32;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
 .detail-gwe {
   display: grid;
   gap: 12px;

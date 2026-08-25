@@ -93,6 +93,7 @@ The current schema is a version 2 document:
 Each node requires a unique ID, title, pattern, style, one to eight ordered sections, evidence kind, and source.
 Every non-root node should also carry one plain-text `relationship` sentence of at most 180 characters.
 It states what the child adds to its parent and stays visible on the card without a click.
+The child detail view repeats it directly below the path, before the node sections, while evidence and source remain separate.
 The browser editor requires this sentence whenever a child is added or edited, while older maps without it remain readable.
 The supported styles are `proof`, `editorial`, `signal`, and `mental-model`.
 Every style shows the full node title.
