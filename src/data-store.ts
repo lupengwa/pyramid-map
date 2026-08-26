@@ -3,12 +3,16 @@ import { dirname } from "node:path"
 
 import {
   collectNodeIds,
+  emptyAgentValidation,
+  parseAgentValidation,
   parseEditableNode,
   parseMapDocument,
   parseTree,
   parseVerification,
+  type AgentValidationState,
   type EditableGweNode,
   type GweNode,
+  type HumanReviewStatus,
   type ProofMapDocument,
   type VerificationState,
 } from "./model"
@@ -17,6 +21,7 @@ export interface MapSnapshot {
   revision: number
   tree: GweNode
   verification: VerificationState
+  agentValidation: AgentValidationState
 }
 
 export interface DataStore {
@@ -24,8 +29,9 @@ export interface DataStore {
   getSnapshot(): MapSnapshot
   getTree(): GweNode
   getVerification(): VerificationState
+  getAgentValidation(): AgentValidationState
   hasNode(id: string): boolean
-  setVerified(id: string, isVerified: boolean): Promise<VerificationState>
+  setHumanReview(id: string, review: { status: HumanReviewStatus | null, description: string }): Promise<VerificationState>
   resetVerification(): Promise<VerificationState>
   updateNode(id: string, input: unknown): Promise<TreeMutationResult>
   addChild(parentId: string, input: unknown): Promise<TreeMutationResult & { nodeId: string }>
@@ -37,6 +43,7 @@ export interface TreeMutationResult extends MapSnapshot {}
 export interface DataStorePaths {
   treePath: string
   verificationPath: string
+  agentValidationPath?: string
 }
 
 export async function createDataStore(paths: DataStorePaths): Promise<DataStore> {
@@ -44,6 +51,7 @@ export async function createDataStore(paths: DataStorePaths): Promise<DataStore>
   let tree = document.root
   let validIds = collectNodeIds(tree)
   let state = parseVerification(JSON.parse(await readFile(paths.verificationPath, "utf8")), validIds)
+  let agentValidation = await readAgentValidation(paths.agentValidationPath, validIds, document.revision)
   let writeQueue = Promise.resolve()
 
   const enqueue = <Result>(work: () => Promise<Result>): Promise<Result> => {
@@ -57,6 +65,7 @@ export async function createDataStore(paths: DataStorePaths): Promise<DataStore>
     tree = document.root
     validIds = collectNodeIds(tree)
     state = parseVerification(JSON.parse(await readFile(paths.verificationPath, "utf8")), validIds)
+    agentValidation = await readAgentValidation(paths.agentValidationPath, validIds, document.revision)
   }
 
   const mutate = <Result>(work: () => Promise<Result>) => enqueue(
@@ -81,25 +90,34 @@ export async function createDataStore(paths: DataStorePaths): Promise<DataStore>
 
   return {
     refresh: () => enqueue(refreshUnlocked),
-    getSnapshot: () => snapshot(document.revision, tree, state),
+    getSnapshot: () => snapshot(document.revision, tree, state, agentValidation),
     getTree: () => structuredClone(tree),
     getVerification: () => cloneState(state),
+    getAgentValidation: () => structuredClone(agentValidation),
     hasNode: (id) => validIds.has(id),
-    setVerified: (id, isVerified) => mutate(async () => {
+    setHumanReview: (id, review) => mutate(async () => {
       if (!validIds.has(id)) throw new Error(`Unknown GWE node: ${id}`)
-      const alreadyVerified = id in state.verified
-      if (alreadyVerified === isVerified) return cloneState(state)
+      if (review.status !== null && review.status !== "validated" && review.status !== "impossible") {
+        throw new Error(`Unknown human review status: ${String(review.status)}`)
+      }
+      const description = review.description.trim()
+      if (description.length > 1_000) throw new Error("Human review description must be 1000 characters or fewer")
+      const previous = state.reviews[id]
+      if ((review.status === null && previous === undefined)
+        || (review.status !== null && previous?.status === review.status && previous.description === description)) {
+        return cloneState(state)
+      }
       const now = new Date().toISOString()
-      const verified = { ...state.verified }
-      if (isVerified) verified[id] = { verifiedAt: now }
-      else delete verified[id]
-      const nextState: VerificationState = { version: 1, updatedAt: now, verified }
+      const reviews = { ...state.reviews }
+      if (review.status === null) delete reviews[id]
+      else reviews[id] = { status: review.status, description, reviewedAt: now }
+      const nextState: VerificationState = { version: 2, updatedAt: now, reviews }
       await commit(tree, nextState)
       return cloneState(state)
     }),
     resetVerification: () => mutate(async () => {
-      if (Object.keys(state.verified).length === 0) return cloneState(state)
-      const nextState: VerificationState = { version: 1, updatedAt: new Date().toISOString(), verified: {} }
+      if (Object.keys(state.reviews).length === 0) return cloneState(state)
+      const nextState: VerificationState = { version: 2, updatedAt: new Date().toISOString(), reviews: {} }
       await commit(tree, nextState)
       return cloneState(state)
     }),
@@ -109,10 +127,10 @@ export async function createDataStore(paths: DataStorePaths): Promise<DataStore>
       if (before === null) throw new Error(`Unknown GWE node: ${id}`)
       const content = parseEditableNode(input, id !== tree.id)
       const changedFields = changedContentFields(before, content)
-      if (changedFields.length === 0) return mutationResult(document.revision, tree, state)
+      if (changedFields.length === 0) return mutationResult(document.revision, tree, state, agentValidation)
       const nextTree = parseTree(updateNodeContent(tree, id, content))
       await commit(nextTree, state)
-      return mutationResult(document.revision, tree, state)
+      return mutationResult(document.revision, tree, state, agentValidation)
     }),
     addChild: (parentId, input) => mutate(async () => {
       if (!validIds.has(parentId)) throw new Error(`Unknown GWE node: ${parentId}`)
@@ -121,7 +139,7 @@ export async function createDataStore(paths: DataStorePaths): Promise<DataStore>
       const child: GweNode = { id: nodeId, ...content }
       const nextTree = parseTree(appendChild(tree, parentId, child))
       await commit(nextTree, state)
-      return { ...mutationResult(document.revision, tree, state), nodeId }
+      return { ...mutationResult(document.revision, tree, state, agentValidation), nodeId }
     }),
     removeNode: (id) => mutate(async () => {
       if (id === tree.id) throw new Error("The proof tree root cannot be removed")
@@ -131,14 +149,14 @@ export async function createDataStore(paths: DataStorePaths): Promise<DataStore>
       if (parentId === null || removedNode === null) throw new Error(`Cannot resolve the subtree rooted at ${id}`)
       const removedIds = [...collectNodeIds(removedNode)]
       const nextTree = parseTree(removeSubtree(tree, id))
-      const nextVerified = { ...state.verified }
-      for (const removedId of removedIds) delete nextVerified[removedId]
-      const verificationChanged = Object.keys(nextVerified).length !== Object.keys(state.verified).length
+      const nextReviews = { ...state.reviews }
+      for (const removedId of removedIds) delete nextReviews[removedId]
+      const verificationChanged = Object.keys(nextReviews).length !== Object.keys(state.reviews).length
       const nextState: VerificationState = verificationChanged
-        ? { version: 1, updatedAt: new Date().toISOString(), verified: nextVerified }
+        ? { version: 2, updatedAt: new Date().toISOString(), reviews: nextReviews }
         : state
       await commit(nextTree, nextState)
-      return { ...mutationResult(document.revision, tree, state), parentId, removedIds }
+      return { ...mutationResult(document.revision, tree, state, agentValidation), parentId, removedIds }
     }),
   }
 }
@@ -175,16 +193,31 @@ async function writeJsonAtomically(path: string, value: unknown): Promise<void> 
   await rename(temporaryPath, path)
 }
 
-function snapshot(revision: number, tree: GweNode, verification: VerificationState): MapSnapshot {
-  return { revision, tree: structuredClone(tree), verification: cloneState(verification) }
+function snapshot(revision: number, tree: GweNode, verification: VerificationState, agentValidation: AgentValidationState): MapSnapshot {
+  return {
+    revision,
+    tree: structuredClone(tree),
+    verification: cloneState(verification),
+    agentValidation: structuredClone(agentValidation),
+  }
 }
 
 function cloneState(state: VerificationState): VerificationState {
   return structuredClone(state)
 }
 
-function mutationResult(revision: number, tree: GweNode, verification: VerificationState): TreeMutationResult {
-  return snapshot(revision, tree, verification)
+function mutationResult(revision: number, tree: GweNode, verification: VerificationState, agentValidation: AgentValidationState): TreeMutationResult {
+  return snapshot(revision, tree, verification, agentValidation)
+}
+
+async function readAgentValidation(path: string | undefined, validIds: Set<string>, treeRevision: number): Promise<AgentValidationState> {
+  if (path === undefined) return emptyAgentValidation(treeRevision)
+  try {
+    return parseAgentValidation(JSON.parse(await readFile(path, "utf8")), validIds)
+  } catch (error) {
+    if (isErrorCode(error, "ENOENT")) return emptyAgentValidation(treeRevision)
+    throw error
+  }
 }
 
 function changedContentFields(before: GweNode, after: EditableGweNode): string[] {

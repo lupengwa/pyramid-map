@@ -197,6 +197,72 @@ export function indexTree(root) {
   return { nodes, parents }
 }
 
+export function createValidationPresentation(nodeId, verification, agentValidation, treeRevision) {
+  const review = verification.reviews?.[nodeId]
+  const human = review === undefined
+    ? {
+        status: "pending",
+        label: "Human: pending",
+        symbol: "○",
+        description: "No human judgment has been recorded.",
+      }
+    : review.status === "validated"
+      ? {
+          status: "validated",
+          label: "Human: validated",
+          symbol: "✓",
+          description: review.description || "A human confirmed that this Expect holds.",
+        }
+      : {
+          status: "impossible",
+          label: "Human: impossible",
+          symbol: "×",
+          description: review.description || "A human confirmed that this Expect cannot hold as written.",
+        }
+
+  const mark = agentValidation.validations?.[nodeId]
+  const isStale = mark !== undefined && agentValidation.treeRevision !== treeRevision
+  const agent = mark === undefined
+    ? {
+        status: "none",
+        label: "Test: none",
+        symbol: "−",
+        description: "No reproducible automated test is linked to this node.",
+        locations: [],
+      }
+    : isStale
+      ? {
+          status: "stale",
+          label: "Test: stale",
+          symbol: "!",
+          description: `The linked test result targets tree revision ${agentValidation.treeRevision}, not current revision ${treeRevision}.`,
+          locations: mark.locations,
+        }
+      : mark.status === "passed"
+        ? {
+            status: "passed",
+            label: "Test: passed",
+            symbol: "✓",
+            description: mark.description,
+            locations: mark.locations,
+          }
+        : {
+            status: "failed",
+            label: "Test: failed",
+            symbol: "×",
+            description: mark.description,
+            locations: mark.locations,
+          }
+
+  return {
+    human,
+    agent,
+    cardClasses: [`human-${human.status}`, `agent-${agent.status}`],
+    command: agentValidation.command,
+    agentUpdatedAt: agentValidation.updatedAt,
+  }
+}
+
 function findNode(root, id) {
   if (root.id === id) return root
   for (const child of root.children ?? []) {

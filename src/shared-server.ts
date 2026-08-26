@@ -2,6 +2,8 @@ import { mkdir, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
+import { readRuntimeIdentity, type RuntimeIdentity } from "./runtime-identity"
+
 export const DEFAULT_SERVER_PORT = 4318
 
 export interface OpenMapOptions {
@@ -13,13 +15,14 @@ export interface OpenMapOptions {
 }
 
 export interface OpenMapResult {
-  status: "started" | "reused"
+  status: "started" | "reused" | "restarted"
   map: string
   url: string
 }
 
-type ServerProbe = "absent" | "occupied" | "ready"
-type ServerHealth = { state: "absent" | "occupied" } | { state: "ready", pid: number }
+type ServerHealth =
+  | { state: "absent" | "occupied" }
+  | { state: "pyramid-map", pid: number, appRoot?: string, runtimeFingerprint?: string }
 
 export async function openMap({
   appRoot,
@@ -29,7 +32,12 @@ export async function openMap({
   verifyBeforeStart = true,
 }: OpenMapOptions): Promise<OpenMapResult> {
   const map = resolve(mapDirectory)
-  const status = await ensureSharedServer({ appRoot: resolve(appRoot), port, verifyBeforeStart })
+  const status = await ensureSharedServer({
+    appRoot: resolve(appRoot),
+    mapDirectory: map,
+    port,
+    verifyBeforeStart,
+  })
   const url = createMapUrl(port, map)
   if (openBrowser) {
     const browser = Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" })
@@ -58,42 +66,42 @@ export async function stopSharedServer(port = DEFAULT_SERVER_PORT): Promise<{ st
   if (health.state === "absent") return { status: "not-running", port }
   if (health.state === "occupied") throw occupiedPortError(port)
 
-  try {
-    process.kill(health.pid, "SIGTERM")
-  } catch (error) {
-    if (!isErrorCode(error, "ESRCH")) throw error
-  }
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if ((await readServerHealth(port)).state === "absent") return { status: "stopped", port }
-    await Bun.sleep(25)
-  }
-  throw new Error(`The shared Pyramid Map server on port ${port} did not stop`)
+  await terminatePyramidProcess(port, health.pid)
+  return { status: "stopped", port }
 }
 
 async function ensureSharedServer({
   appRoot,
+  mapDirectory,
   port,
   verifyBeforeStart,
 }: {
   appRoot: string
+  mapDirectory: string
   port: number
   verifyBeforeStart: boolean
-}): Promise<"started" | "reused"> {
-  const initialProbe = await probeServer(port)
-  if (initialProbe === "ready") return "reused"
-  if (initialProbe === "occupied") throw occupiedPortError(port)
+}): Promise<"started" | "reused" | "restarted"> {
+  const expectedIdentity = await readRuntimeIdentity(appRoot)
+  const initialHealth = await readServerHealth(port)
+  if (initialHealth.state === "occupied") throw occupiedPortError(port)
+  if (matchesIdentity(initialHealth, expectedIdentity)) return "reused"
 
   const lockPath = `${tmpdir()}/pyramid-map-${port}.start.lock`
-  const ownsLock = await acquireStartLock(lockPath, port)
+  const ownsLock = await acquireStartLock(lockPath, port, expectedIdentity)
   if (!ownsLock) return "reused"
 
   try {
-    const secondProbe = await probeServer(port)
-    if (secondProbe === "ready") return "reused"
-    if (secondProbe === "occupied") throw occupiedPortError(port)
+    const currentHealth = await readServerHealth(port)
+    if (currentHealth.state === "occupied") throw occupiedPortError(port)
+    if (matchesIdentity(currentHealth, expectedIdentity)) return "reused"
 
+    const replacingStaleRuntime = currentHealth.state === "pyramid-map"
     if (verifyBeforeStart) await runVerification(appRoot)
-    const process_ = Bun.spawn([process.execPath, "run", "server.ts"], {
+    if (currentHealth.state === "pyramid-map") {
+      await terminatePyramidProcess(port, currentHealth.pid)
+    }
+
+    const process_ = Bun.spawn([process.execPath, "run", "server.ts", "--map", mapDirectory], {
       cwd: appRoot,
       env: { ...process.env, PYRAMID_MAP_PORT: String(port) },
       detached: true,
@@ -103,20 +111,14 @@ async function ensureSharedServer({
     })
     process_.unref()
 
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const probe = await probeServer(port)
-      if (probe === "ready") return "started"
-      if (probe === "occupied") throw occupiedPortError(port)
-      if (process_.exitCode !== null) throw new Error("The shared Pyramid Map server exited before becoming ready")
-      await Bun.sleep(25)
-    }
-    throw new Error(`The shared Pyramid Map server did not become ready on port ${port}`)
+    await waitForExpectedServer(port, expectedIdentity, process_)
+    return replacingStaleRuntime ? "restarted" : "started"
   } finally {
     await rm(lockPath, { recursive: true, force: true })
   }
 }
 
-async function acquireStartLock(lockPath: string, port: number): Promise<boolean> {
+async function acquireStartLock(lockPath: string, port: number, expectedIdentity: RuntimeIdentity): Promise<boolean> {
   const deadline = Date.now() + 30_000
   while (true) {
     try {
@@ -129,13 +131,49 @@ async function acquireStartLock(lockPath: string, port: number): Promise<boolean
         await rm(lockPath, { recursive: true, force: true })
         continue
       }
-      const probe = await probeServer(port)
-      if (probe === "ready") return false
-      if (probe === "occupied") throw occupiedPortError(port)
+      const health = await readServerHealth(port)
+      if (matchesIdentity(health, expectedIdentity)) return false
+      if (health.state === "occupied") throw occupiedPortError(port)
       if (Date.now() >= deadline) throw new Error("Another Pyramid Map launcher did not finish starting the shared server")
       await Bun.sleep(50)
     }
   }
+}
+
+async function waitForExpectedServer(
+  port: number,
+  expectedIdentity: RuntimeIdentity,
+  process_: ReturnType<typeof Bun.spawn>,
+): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const health = await readServerHealth(port)
+    if (matchesIdentity(health, expectedIdentity)) return
+    if (health.state === "occupied") throw occupiedPortError(port)
+    if (health.state === "pyramid-map") {
+      throw new Error(`A different Pyramid Map runtime claimed port ${port} while the current runtime was starting`)
+    }
+    if (process_.exitCode !== null) throw new Error("The shared Pyramid Map server exited before becoming ready")
+    await Bun.sleep(25)
+  }
+  throw new Error(`The shared Pyramid Map server did not become ready on port ${port}`)
+}
+
+async function terminatePyramidProcess(port: number, pid: number): Promise<void> {
+  try {
+    process.kill(pid, "SIGTERM")
+  } catch (error) {
+    if (!isErrorCode(error, "ESRCH")) throw error
+  }
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const health = await readServerHealth(port)
+    if (health.state === "absent") return
+    if (health.state === "occupied") throw occupiedPortError(port)
+    if (health.pid !== pid) {
+      throw new Error(`Another Pyramid Map process claimed port ${port} before the previous process released it`)
+    }
+    await Bun.sleep(25)
+  }
+  throw new Error(`The shared Pyramid Map server on port ${port} did not stop`)
 }
 
 async function runVerification(appRoot: string): Promise<void> {
@@ -147,10 +185,6 @@ async function runVerification(appRoot: string): Promise<void> {
   if (await verification.exited !== 0) throw new Error("Pyramid Map verification failed, so the shared server was not started")
 }
 
-async function probeServer(port: number): Promise<ServerProbe> {
-  return (await readServerHealth(port)).state
-}
-
 async function readServerHealth(port: number): Promise<ServerHealth> {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/healthz`, {
@@ -158,13 +192,32 @@ async function readServerHealth(port: number): Promise<ServerHealth> {
     })
     if (!response.ok) return { state: "occupied" }
     const body = await response.json().catch(() => null)
-    return isPyramidMapHealth(body) ? { state: "ready", pid: body.pid } : { state: "occupied" }
+    return isPyramidMapHealth(body)
+      ? {
+        state: "pyramid-map",
+        pid: body.pid,
+        appRoot: typeof body.appRoot === "string" ? body.appRoot : undefined,
+        runtimeFingerprint: typeof body.runtimeFingerprint === "string" ? body.runtimeFingerprint : undefined,
+      }
+      : { state: "occupied" }
   } catch {
     return { state: "absent" }
   }
 }
 
-function isPyramidMapHealth(value: unknown): value is { ok: true, app: "pyramid-map", pid: number } {
+function matchesIdentity(health: ServerHealth, expected: RuntimeIdentity): boolean {
+  return health.state === "pyramid-map"
+    && health.appRoot === expected.appRoot
+    && health.runtimeFingerprint === expected.fingerprint
+}
+
+function isPyramidMapHealth(value: unknown): value is {
+  ok: true
+  app: "pyramid-map"
+  pid: number
+  appRoot?: unknown
+  runtimeFingerprint?: unknown
+} {
   return typeof value === "object" && value !== null && "ok" in value && value.ok === true
     && "app" in value && value.app === "pyramid-map"
     && "pid" in value && typeof value.pid === "number" && Number.isInteger(value.pid) && value.pid > 0

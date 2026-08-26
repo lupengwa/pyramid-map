@@ -18,6 +18,7 @@ export function createMapStoreRegistry(defaultMapDirectory: string): MapStoreReg
         pendingStore = createDataStore({
           treePath: join(directory, "tree.json"),
           verificationPath: join(directory, "verification.json"),
+          agentValidationPath: join(directory, "agent-validation.json"),
         })
         stores.set(directory, pendingStore)
       }

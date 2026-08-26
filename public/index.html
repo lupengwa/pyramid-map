@@ -77,9 +77,42 @@
             <code id="dialog-source"></code>
           </div>
         </section>
+        <section class="detail-validation human-validation" aria-labelledby="human-validation-title">
+          <div class="validation-heading">
+            <h3 id="human-validation-title">Human judgment</h3>
+            <span class="validation-badge" id="dialog-human-badge"></span>
+          </div>
+          <p id="dialog-human-summary"></p>
+          <label class="validation-field">
+            <span>Status</span>
+            <select id="dialog-human-status">
+              <option value="pending">Pending</option>
+              <option value="validated">Validated</option>
+              <option value="impossible">Impossible as written</option>
+            </select>
+          </label>
+          <label class="validation-field">
+            <span>Description</span>
+            <textarea id="dialog-human-description" maxlength="1000" rows="3" placeholder="Record what you checked or why this is impossible."></textarea>
+          </label>
+        </section>
+        <section class="detail-validation agent-validation" aria-labelledby="agent-validation-title">
+          <div class="validation-heading">
+            <h3 id="agent-validation-title">Reproducible agent test</h3>
+            <span class="validation-badge" id="dialog-agent-badge"></span>
+          </div>
+          <p id="dialog-agent-summary"></p>
+          <div class="agent-test-details" id="dialog-agent-details" hidden>
+            <strong>Test locations</strong>
+            <ul id="dialog-agent-locations"></ul>
+            <strong>Reproduce</strong>
+            <code id="dialog-agent-command"></code>
+            <small id="dialog-agent-time"></small>
+          </div>
+        </section>
       </div>
       <footer class="detail-actions">
-        <button class="primary-button" id="dialog-verify" type="button"></button>
+        <button class="primary-button" id="dialog-save-review" type="button">Save human judgment</button>
         <button class="text-button" id="dialog-toggle-children" type="button" hidden></button>
         <button class="text-button" id="dialog-focus" type="button">Focus branch</button>
         <span class="action-divider" aria-hidden="true"></span>
@@ -171,7 +204,7 @@
     <form method="dialog">
       <p class="eyebrow">Human verification</p>
       <h2 id="reset-title">Reset every verification mark?</h2>
-      <p>This empties <code>data/verification.json</code>. The proof tree itself is unchanged.</p>
+      <p>This clears every human judgment in <code>verification.json</code>. Agent test results and the proof tree are unchanged.</p>
       <div class="confirm-actions">
         <button class="text-button" value="cancel">Cancel</button>
         <button class="danger-button" id="confirm-reset" value="confirm">Reset marks</button>

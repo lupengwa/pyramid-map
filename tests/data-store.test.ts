@@ -84,16 +84,16 @@ describe("editable proof store", () => {
   test("removes a subtree and its verification marks but protects G0", async () => {
     const store = await createDataStore({ treePath, verificationPath })
     const added = await store.addChild("G1", childInput)
-    await store.setVerified("G1", true)
-    await store.setVerified(added.nodeId, true)
+    await store.setHumanReview("G1", { status: "validated", description: "Works in the browser." })
+    await store.setHumanReview(added.nodeId, { status: "impossible", description: "Cannot hold as written." })
 
     const result = await store.removeNode("G1")
 
     expect(result.removedIds).toEqual(["G1", "G1.1"])
     expect(result.parentId).toBe("G0")
     expect(result.tree.children).toBeUndefined()
-    expect(result.verification.verified).toEqual({})
-    expect(JSON.parse(await readFile(verificationPath, "utf8")).verified).toEqual({})
+    expect(result.verification.reviews).toEqual({})
+    expect(JSON.parse(await readFile(verificationPath, "utf8")).reviews).toEqual({})
     await expect(store.removeNode("G0")).rejects.toThrow("root")
   })
 
@@ -110,9 +110,22 @@ describe("editable proof store", () => {
     const store = await createDataStore({ treePath, verificationPath })
     const treeBefore = await readFile(treePath, "utf8")
 
-    await store.setVerified("G1", true)
+    await store.setHumanReview("G1", { status: "validated", description: "Checked manually." })
 
     expect(store.getSnapshot().revision).toBe(0)
     expect(await readFile(treePath, "utf8")).toBe(treeBefore)
+  })
+
+  test("stores validated and impossible human judgments with descriptions", async () => {
+    const store = await createDataStore({ treePath, verificationPath })
+
+    await store.setHumanReview("G0", { status: "validated", description: "The root works." })
+    await store.setHumanReview("G1", { status: "impossible", description: "The child contract conflicts." })
+
+    expect(store.getVerification().reviews).toMatchObject({
+      G0: { status: "validated", description: "The root works." },
+      G1: { status: "impossible", description: "The child contract conflicts." },
+    })
+    expect(JSON.parse(await readFile(verificationPath, "utf8")).version).toBe(2)
   })
 })
