@@ -2,10 +2,13 @@ import { join } from "node:path"
 
 import type { DataStore } from "./data-store"
 import { parseEditableNode } from "./model"
+import type { RuntimeIdentity } from "./runtime-identity"
 
 interface HttpAppOptions {
   getDataStore(mapDirectory?: string | null): Promise<DataStore>
   publicRoot: string
+  runtimeIdentity: RuntimeIdentity
+  beforeRequest?(request: Request): Promise<Response | null>
 }
 
 const staticFiles = new Map([
@@ -16,14 +19,22 @@ const staticFiles = new Map([
   ["/favicon.svg", ["favicon.svg", "image/svg+xml"]],
 ] as const)
 
-export function createHttpApp({ getDataStore, publicRoot }: HttpAppOptions): (request: Request) => Promise<Response> {
+export function createHttpApp({ getDataStore, publicRoot, runtimeIdentity, beforeRequest }: HttpAppOptions): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
       const url = new URL(request.url)
 
       if (request.method === "GET" && url.pathname === "/healthz") {
-        return json({ ok: true, app: "pyramid-map", pid: process.pid })
+        return json({
+          ok: true,
+          app: "pyramid-map",
+          pid: process.pid,
+          appRoot: runtimeIdentity.appRoot,
+          runtimeFingerprint: runtimeIdentity.fingerprint,
+        })
       }
+      const intercepted = await beforeRequest?.(request)
+      if (intercepted !== undefined && intercepted !== null) return intercepted
       if (url.pathname.startsWith("/api/")) {
         const dataStore = await getDataStore(url.searchParams.get("map"))
         await dataStore.refresh()
@@ -86,6 +97,9 @@ async function handleApiRequest(request: Request, url: URL, dataStore: DataStore
   if (request.method === "GET" && url.pathname === "/api/verification") {
     return json(dataStore.getVerification())
   }
+  if (request.method === "GET" && url.pathname === "/api/agent-validation") {
+    return json(dataStore.getAgentValidation())
+  }
   if (request.method === "DELETE" && url.pathname === "/api/verification") {
     return json(await dataStore.resetVerification())
   }
@@ -95,8 +109,10 @@ async function handleApiRequest(request: Request, url: URL, dataStore: DataStore
     const id = decodeURIComponent(verificationMatch[1])
     if (!dataStore.hasNode(id)) return json({ error: `Unknown GWE node: ${id}` }, 404)
     const body = await request.json().catch(() => null)
-    if (!isVerificationUpdate(body)) return json({ error: "Body must be { verified: boolean }" }, 400)
-    return json(await dataStore.setVerified(id, body.verified))
+    if (!isVerificationUpdate(body)) {
+      return json({ error: "Body must contain status (validated, impossible, or null) and a description" }, 400)
+    }
+    return json(await dataStore.setHumanReview(id, body))
   }
 
   return new Response("Not found", { status: 404 })
@@ -118,6 +134,11 @@ function json(value: unknown, status = 200): Response {
   })
 }
 
-function isVerificationUpdate(value: unknown): value is { verified: boolean } {
-  return typeof value === "object" && value !== null && "verified" in value && typeof value.verified === "boolean"
+function isVerificationUpdate(value: unknown): value is { status: "validated" | "impossible" | null, description: string } {
+  return typeof value === "object"
+    && value !== null
+    && "status" in value
+    && (value.status === "validated" || value.status === "impossible" || value.status === null)
+    && "description" in value
+    && typeof value.description === "string"
 }

@@ -27,14 +27,34 @@ export interface ProofMapDocument {
 
 export type EditableGweNode = Omit<GweNode, "id" | "children">
 
-export interface VerificationMark {
-  verifiedAt: string
+export type HumanReviewStatus = "validated" | "impossible"
+
+export interface HumanReview {
+  status: HumanReviewStatus
+  description: string
+  reviewedAt: string
 }
 
 export interface VerificationState {
-  version: 1
+  version: 2
   updatedAt: string | null
-  verified: Record<string, VerificationMark>
+  reviews: Record<string, HumanReview>
+}
+
+export type AgentValidationStatus = "passed" | "failed"
+
+export interface AgentValidationMark {
+  status: AgentValidationStatus
+  description: string
+  locations: string[]
+}
+
+export interface AgentValidationState {
+  version: 1
+  treeRevision: number
+  updatedAt: string | null
+  command: string
+  validations: Record<string, AgentValidationMark>
 }
 
 export function parseTree(value: unknown): GweNode {
@@ -102,20 +122,88 @@ export function collectNodeIds(root: GweNode): Set<string> {
 }
 
 export function parseVerification(value: unknown, validIds: Set<string>): VerificationState {
-  if (!isRecord(value) || value.version !== 1 || !(value.updatedAt === null || typeof value.updatedAt === "string") || !isRecord(value.verified)) {
+  if (!isRecord(value) || !(value.updatedAt === null || typeof value.updatedAt === "string")) {
     throw new Error("data/verification.json has an invalid shape")
   }
 
-  const verified: Record<string, VerificationMark> = {}
-  for (const [id, mark] of Object.entries(value.verified)) {
-    if (!validIds.has(id)) continue
-    if (!isRecord(mark) || typeof mark.verifiedAt !== "string") {
-      throw new Error(`Verification mark ${id} has an invalid shape`)
+  if (value.version === 1 && isRecord(value.verified)) {
+    const reviews: Record<string, HumanReview> = {}
+    for (const [id, mark] of Object.entries(value.verified)) {
+      if (!validIds.has(id)) continue
+      if (!isRecord(mark) || typeof mark.verifiedAt !== "string") {
+        throw new Error(`Verification mark ${id} has an invalid shape`)
+      }
+      reviews[id] = { status: "validated", description: "", reviewedAt: mark.verifiedAt }
     }
-    verified[id] = { verifiedAt: mark.verifiedAt }
+    return { version: 2, updatedAt: value.updatedAt, reviews }
   }
 
-  return { version: 1, updatedAt: value.updatedAt, verified }
+  if (value.version !== 2 || !isRecord(value.reviews)) {
+    throw new Error("data/verification.json has an invalid shape")
+  }
+
+  const reviews: Record<string, HumanReview> = {}
+  for (const [id, review] of Object.entries(value.reviews)) {
+    if (!validIds.has(id)) continue
+    if (!isRecord(review)
+      || !isHumanReviewStatus(review.status)
+      || typeof review.description !== "string"
+      || review.description.length > 1_000
+      || typeof review.reviewedAt !== "string") {
+      throw new Error(`Human review ${id} has an invalid shape`)
+    }
+    reviews[id] = {
+      status: review.status,
+      description: review.description.trim(),
+      reviewedAt: review.reviewedAt,
+    }
+  }
+
+  return { version: 2, updatedAt: value.updatedAt, reviews }
+}
+
+export function parseAgentValidation(value: unknown, validIds: Set<string>): AgentValidationState {
+  if (!isRecord(value)
+    || value.version !== 1
+    || !Number.isInteger(value.treeRevision)
+    || value.treeRevision < 0
+    || !(value.updatedAt === null || typeof value.updatedAt === "string")
+    || typeof value.command !== "string"
+    || !isRecord(value.validations)) {
+    throw new Error("data/agent-validation.json has an invalid shape")
+  }
+
+  const validations: Record<string, AgentValidationMark> = {}
+  for (const [id, mark] of Object.entries(value.validations)) {
+    if (!validIds.has(id)) continue
+    if (!isRecord(mark)
+      || !isAgentValidationStatus(mark.status)
+      || typeof mark.description !== "string"
+      || mark.description.trim() === ""
+      || !Array.isArray(mark.locations)
+      || mark.locations.length === 0
+      || mark.locations.length > 12
+      || mark.locations.some((location) => typeof location !== "string" || location.trim() === "")) {
+      throw new Error(`Agent validation ${id} has an invalid shape`)
+    }
+    validations[id] = {
+      status: mark.status,
+      description: mark.description.trim(),
+      locations: mark.locations.map((location) => location.trim()),
+    }
+  }
+
+  return {
+    version: 1,
+    treeRevision: value.treeRevision,
+    updatedAt: value.updatedAt,
+    command: value.command.trim(),
+    validations,
+  }
+}
+
+export function emptyAgentValidation(treeRevision: number): AgentValidationState {
+  return { version: 1, treeRevision, updatedAt: null, command: "", validations: {} }
 }
 
 function parseNode(value: unknown, location: string, ids: Set<string>): GweNode {
@@ -243,4 +331,12 @@ function isRecord(value: unknown): value is Record<string, any> {
 
 function isEvidence(value: unknown): value is EvidenceKind {
   return value === "structural" || value === "source" || value === "e2e"
+}
+
+function isHumanReviewStatus(value: unknown): value is HumanReviewStatus {
+  return value === "validated" || value === "impossible"
+}
+
+function isAgentValidationStatus(value: unknown): value is AgentValidationStatus {
+  return value === "passed" || value === "failed"
 }

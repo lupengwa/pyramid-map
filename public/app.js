@@ -1,4 +1,4 @@
-import { createMapFitTransform, createMapLayout, createMapSurfacePresentation, createMindmapBranchPath, createNodeProofRows, indexTree, resolveNodeClick, visibleTree } from "./map-model.js"
+import { createMapFitTransform, createMapLayout, createMapSurfacePresentation, createMindmapBranchPath, createNodeProofRows, createValidationPresentation, indexTree, resolveNodeClick, visibleTree } from "./map-model.js"
 
 const viewportElement = document.querySelector("#map-viewport")
 const panLayerElement = document.querySelector("#map-pan-layer")
@@ -36,8 +36,10 @@ const transform = { x: 0, y: 0, scale: 1 }
 const expandedIds = new Set(["G0"])
 let proofTree
 let treeIndex
+let treeRevision = 0
 let currentLayout
 let verification = emptyVerification()
+let agentValidation = emptyAgentValidation()
 let focusId = null
 let selectedId = null
 let saveInProgress = false
@@ -55,15 +57,14 @@ async function loadApp() {
   setMessage("")
   viewportElement.setAttribute("aria-busy", "true")
   try {
-    const [tree, savedVerification] = await Promise.all([
-      requestJson("/api/tree"),
-      requestJson("/api/verification"),
-    ])
-    proofTree = tree
-    renderMapIdentity(tree)
-    treeIndex = indexTree(tree)
-    verification = savedVerification
-    selectedId = tree.id
+    const snapshot = await requestJson("/api/map")
+    proofTree = snapshot.tree
+    renderMapIdentity(proofTree)
+    treeIndex = indexTree(proofTree)
+    treeRevision = snapshot.revision
+    verification = snapshot.verification
+    agentValidation = snapshot.agentValidation
+    selectedId = proofTree.id
     renderMap({ fit: true })
     renderSaveState()
   } catch (error) {
@@ -113,12 +114,12 @@ function nodeMarkup(node) {
   const parentId = treeIndex.parents.get(node.id)
   const childCount = treeIndex.nodes.get(node.id).children?.length ?? 0
   const isExpanded = expandedIds.has(node.id)
-  const isVerified = node.id in verification.verified
+  const validation = createValidationPresentation(node.id, verification, agentValidation, treeRevision)
   const classes = [
     "map-node",
     `card-style-${node.style ?? "proof"}`,
     node.id === (focusId ?? proofTree.id) ? "map-node-root" : "",
-    isVerified ? "is-verified" : "",
+    ...validation.cardClasses,
     node.id === selectedId ? "is-selected" : "",
   ].filter(Boolean).join(" ")
   const proofRows = createNodeProofRows(node)
@@ -131,7 +132,7 @@ function nodeMarkup(node) {
   return `
     <article class="${classes}" id="${domId(node.id)}" data-node-id="${node.id}" style="--branch-color:${branchColorFor(node.id)};left:${node.x - node.width / 2}px;top:${node.y}px;width:${node.width}px;height:${node.height}px">
       <button class="node-open" type="button" data-open-node="${node.id}" aria-label="Open ${node.id}: ${plainText(node.title)}">
-        <span class="node-kicker"><span class="verification-dot" aria-hidden="true"></span>${node.id}</span>
+        <span class="node-kicker"><span class="human-status-icon" aria-hidden="true">${validation.human.symbol}</span>${node.id}</span>
         <span class="node-title">${node.title}</span>
       </button>
       ${relationship === null ? "" : `<p class="node-relationship"><strong>To ${parentId}</strong><span>${escapeText(relationship)}</span></p>`}
@@ -139,11 +140,16 @@ function nodeMarkup(node) {
         ${proofRows}
       </dl>
       <footer class="node-footer">
-        <span>${isVerified ? "Human verified" : "Not verified"}</span>
+        ${validationBadgeMarkup("human", validation.human)}
+        ${validationBadgeMarkup("agent", validation.agent)}
         ${childCount === 0 ? "" : `<button class="child-toggle" type="button" data-toggle-node="${node.id}" aria-label="${isExpanded ? "Collapse" : "Show"} ${childCount} children of ${node.id}" aria-expanded="${isExpanded}">${isExpanded ? "−" : "+"}${childCount}</button>`}
       </footer>
     </article>
   `
+}
+
+function validationBadgeMarkup(kind, status) {
+  return `<span class="validation-badge ${kind}-${status.status}" title="${escapeText(status.description)}"><span aria-hidden="true">${status.symbol}</span>${status.label}</span>`
 }
 
 function edgeId(edge) {
@@ -279,7 +285,8 @@ function renderDialog(id) {
   const node = treeIndex.nodes.get(id)
   const parentId = treeIndex.parents.get(id)
   const childIds = (node.children ?? []).map((child) => child.id)
-  const isVerified = id in verification.verified
+  const validation = createValidationPresentation(id, verification, agentValidation, treeRevision)
+  const review = verification.reviews[id]
 
   document.querySelector("#dialog-id").textContent = `${id} · capability proof`
   document.querySelector("#dialog-title").innerHTML = node.title
@@ -300,11 +307,30 @@ function renderDialog(id) {
   badge.textContent = evidenceNames[node.evidence]
   document.querySelector("#dialog-source").textContent = node.source
 
-  const verifyButton = document.querySelector("#dialog-verify")
-  verifyButton.textContent = isVerified ? "Verified by me" : "Mark human verified"
-  verifyButton.classList.toggle("is-verified", isVerified)
-  verifyButton.disabled = saveInProgress
-  verifyButton.dataset.verifyNode = id
+  const humanBadge = document.querySelector("#dialog-human-badge")
+  humanBadge.className = `validation-badge human-${validation.human.status}`
+  humanBadge.textContent = `${validation.human.symbol} ${validation.human.label}`
+  document.querySelector("#dialog-human-summary").textContent = validation.human.description
+  document.querySelector("#dialog-human-status").value = review?.status ?? "pending"
+  document.querySelector("#dialog-human-description").value = review?.description ?? ""
+
+  const agentBadge = document.querySelector("#dialog-agent-badge")
+  agentBadge.className = `validation-badge agent-${validation.agent.status}`
+  agentBadge.textContent = `${validation.agent.symbol} ${validation.agent.label}`
+  document.querySelector("#dialog-agent-summary").textContent = validation.agent.description
+  const agentDetails = document.querySelector("#dialog-agent-details")
+  agentDetails.hidden = validation.agent.locations.length === 0
+  document.querySelector("#dialog-agent-locations").innerHTML = validation.agent.locations
+    .map((location) => `<li><code>${escapeText(location)}</code></li>`)
+    .join("")
+  document.querySelector("#dialog-agent-command").textContent = validation.command
+  document.querySelector("#dialog-agent-time").textContent = validation.agentUpdatedAt === null
+    ? "No completed test run recorded"
+    : `Last run ${new Date(validation.agentUpdatedAt).toLocaleString()}`
+
+  const saveReviewButton = document.querySelector("#dialog-save-review")
+  saveReviewButton.disabled = saveInProgress
+  saveReviewButton.dataset.reviewNode = id
 
   const toggleButton = document.querySelector("#dialog-toggle-children")
   toggleButton.hidden = childIds.length === 0
@@ -444,6 +470,8 @@ async function deletePendingNode() {
 function applyTreeState(result) {
   proofTree = result.tree
   verification = result.verification
+  agentValidation = result.agentValidation
+  treeRevision = result.revision
   treeIndex = indexTree(proofTree)
 }
 
@@ -543,20 +571,22 @@ function proofPath(id) {
   return path
 }
 
-async function toggleVerification(id) {
-  const isVerified = !(id in verification.verified)
+async function saveHumanReview(id) {
+  const selectedStatus = document.querySelector("#dialog-human-status").value
+  const status = selectedStatus === "pending" ? null : selectedStatus
+  const description = status === null ? "" : document.querySelector("#dialog-human-description").value
   await saveAction(
     () => requestJson(`/api/verification/${encodeURIComponent(id)}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ verified: isVerified }),
+      body: JSON.stringify({ status, description }),
     }),
-    `${id} ${isVerified ? "marked verified by you" : "is no longer marked verified"}`,
+    `${id} human judgment saved as ${status ?? "pending"}`,
   )
 }
 
 async function resetVerification() {
-  if (Object.keys(verification.verified).length === 0) return
+  if (Object.keys(verification.reviews).length === 0) return
   await saveAction(
     () => requestJson("/api/verification", { method: "DELETE" }),
     "All human verification marks were reset",
@@ -584,9 +614,14 @@ async function saveAction(action, successMessage) {
 }
 
 function renderSaveState() {
-  const verifiedCount = Object.keys(verification.verified).length
-  countLabel.textContent = `${verifiedCount} of ${treeIndex?.nodes.size ?? 0} verified`
-  resetButton.disabled = verifiedCount === 0 || saveInProgress
+  const total = treeIndex?.nodes.size ?? 0
+  const reviews = Object.values(verification.reviews)
+  const humanValidated = reviews.filter((review) => review.status === "validated").length
+  const humanImpossible = reviews.filter((review) => review.status === "impossible").length
+  const agentPassed = Object.values(agentValidation.validations)
+    .filter((mark) => mark.status === "passed" && agentValidation.treeRevision === treeRevision).length
+  countLabel.textContent = `Human ✓${humanValidated} ×${humanImpossible} · Tests ✓${agentPassed} · ${total} nodes`
+  resetButton.disabled = reviews.length === 0 || saveInProgress
   if (saveInProgress) return
   if (lastTreeSave !== null) {
     saveStatus.textContent = lastTreeSave
@@ -680,7 +715,11 @@ function clamp(value, minimum, maximum) {
 }
 
 function emptyVerification() {
-  return { version: 1, updatedAt: null, verified: {} }
+  return { version: 2, updatedAt: null, reviews: {} }
+}
+
+function emptyAgentValidation() {
+  return { version: 1, treeRevision: 0, updatedAt: null, command: "", validations: {} }
 }
 
 nodesElement.addEventListener("click", (event) => {
@@ -693,7 +732,7 @@ document.querySelector("#close-dialog").addEventListener("click", () => nodeDial
 nodeDialog.addEventListener("click", (event) => {
   if (event.target === nodeDialog) nodeDialog.close()
 })
-document.querySelector("#dialog-verify").addEventListener("click", (event) => toggleVerification(event.currentTarget.dataset.verifyNode))
+document.querySelector("#dialog-save-review").addEventListener("click", (event) => saveHumanReview(event.currentTarget.dataset.reviewNode))
 document.querySelector("#dialog-toggle-children").addEventListener("click", (event) => toggleChildren(event.currentTarget.dataset.toggleNode))
 document.querySelector("#dialog-focus").addEventListener("click", (event) => focusBranch(event.currentTarget.dataset.focusNode))
 document.querySelector("#dialog-edit").addEventListener("click", (event) => openNodeEditor("edit", event.currentTarget.dataset.editNode))

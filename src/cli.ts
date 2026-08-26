@@ -57,8 +57,9 @@ export async function main(rawArguments: string[]): Promise<number> {
 
     const treePath = join(mapDir, "tree.json")
     const verificationPath = join(mapDir, "verification.json")
+    const agentValidationPath = join(mapDir, "agent-validation.json")
     const agentBasePath = join(mapDir, ".pyramid-map", "agent-base.json")
-    const store = await createDataStore({ treePath, verificationPath })
+    const store = await createDataStore({ treePath, verificationPath, agentValidationPath })
     if (command === "read") {
       const full = takeBooleanFlag(args, "--full")
       assertNoArguments(args)
@@ -119,7 +120,9 @@ function summarizeSnapshot(snapshot: MapSnapshot, differenceCount: number) {
     revision: snapshot.revision,
     agentBaseInSync: differenceCount === 0,
     differenceCount,
-    verified: Object.keys(snapshot.verification.verified).length,
+    humanValidated: Object.values(snapshot.verification.reviews).filter((review) => review.status === "validated").length,
+    humanImpossible: Object.values(snapshot.verification.reviews).filter((review) => review.status === "impossible").length,
+    agentPassed: Object.values(snapshot.agentValidation.validations).filter((mark) => mark.status === "passed").length,
     nodes: flattenNodes(snapshot.tree).map(summarizeNode),
   }
 }

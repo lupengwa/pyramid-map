@@ -6,23 +6,36 @@ import { createDataStore } from "../src/data-store"
 import { createHttpApp } from "../src/http-app"
 import { compareMaps } from "../src/map-diff"
 import { collectNodeIds, parseMapDocument } from "../src/model"
+import { readRuntimeIdentity } from "../src/runtime-identity"
 import { createMapFitTransform, createMapLayout, createMindmapBranchPath, createNodeProofRows, resolveNodeClick, visibleTree } from "../public/map-model.js"
 
 const appRoot = join(import.meta.dir, "..")
 const temporaryRoot = await mkdtemp(join(tmpdir(), "dsh-gwe-verify-"))
 const treePath = join(temporaryRoot, "tree.json")
 const verificationPath = join(temporaryRoot, "verification.json")
+const agentValidationPath = join(temporaryRoot, "agent-validation.json")
 const agentBasePath = join(temporaryRoot, ".pyramid-map", "agent-base.json")
+const runtimeIdentity = await readRuntimeIdentity(appRoot)
 
 try {
   const bundledTree = await readFile(join(appRoot, "maps/native-dsh-web-path/tree.json"), "utf8")
   await mkdir(join(temporaryRoot, ".pyramid-map"))
   await writeFile(treePath, bundledTree, "utf8")
   await writeFile(agentBasePath, bundledTree, "utf8")
-  await writeFile(verificationPath, '{"version":1,"updatedAt":null,"verified":{}}\n', "utf8")
+  await writeFile(verificationPath, '{"version":2,"updatedAt":null,"reviews":{}}\n', "utf8")
+  await writeFile(agentValidationPath, JSON.stringify({
+    version: 1,
+    treeRevision: 0,
+    updatedAt: "2026-08-25T00:00:00.000Z",
+    command: "bun run verify",
+    validations: {
+      G0: { status: "passed", description: "The root acceptance path passed.", locations: ["scripts/verify.ts:1"] },
+    },
+  }), "utf8")
   const dataStore = await createDataStore({
     treePath,
     verificationPath,
+    agentValidationPath,
   })
   const nodeIds = collectNodeIds(dataStore.getTree())
   assert(nodeIds.size === 22, `Expected 22 proof nodes, found ${nodeIds.size}`)
@@ -31,6 +44,7 @@ try {
   const app = createHttpApp({
     getDataStore: async () => dataStore,
     publicRoot: join(appRoot, "public"),
+    runtimeIdentity,
   })
   const page = await app(new Request("http://local.test/"))
   assert(page.status === 200, `Expected the HTML route to return 200, received ${page.status}`)
@@ -40,13 +54,18 @@ try {
   assert(pageSource.includes('<option value="mental-model">Mental model</option>'), "The editor cannot preserve the mental-model card style")
   assert(pageSource.includes('id="editor-relationship"'), "The editor cannot author a child-to-parent relationship")
   assert(pageSource.includes('id="dialog-relationship-panel"') && pageSource.includes('id="evidence-title">Evidence</h3>'), "The detail view does not separate the parent relationship from evidence")
+  assert(pageSource.includes('id="human-validation-title"') && pageSource.includes('id="agent-validation-title"'), "The detail view does not separate human judgment from reproducible agent tests")
   assert(!pageSource.includes("Proof context"), "The detail view still labels structural relationships as proof context")
   const health = await app(new Request("http://local.test/healthz"))
-  assert(health.status === 200 && (await health.json()).app === "pyramid-map", "The shared-server health identity is unavailable")
+  const healthBody = await health.json()
+  assert(health.status === 200 && healthBody.app === "pyramid-map", "The shared-server health identity is unavailable")
+  assert(healthBody.appRoot === runtimeIdentity.appRoot && healthBody.runtimeFingerprint === runtimeIdentity.fingerprint, "The shared-server health identity omits its runtime fingerprint")
   const treeResponse = await app(new Request("http://local.test/api/tree"))
   assert(treeResponse.status === 200, "The tree API is unavailable")
   const snapshotResponse = await app(new Request("http://local.test/api/map"))
-  assert(snapshotResponse.status === 200 && (await snapshotResponse.json()).revision === 0, "The revisioned map API is unavailable")
+  const initialSnapshot = await snapshotResponse.json()
+  assert(snapshotResponse.status === 200 && initialSnapshot.revision === 0, "The revisioned map API is unavailable")
+  assert(initialSnapshot.agentValidation.validations.G0.status === "passed", "The map snapshot omits generated agent-test evidence")
   const mapModel = await app(new Request("http://local.test/map-model.js"))
   assert(mapModel.status === 200, "The browser map model is unavailable")
   const favicon = await app(new Request("http://local.test/favicon.svg"))
@@ -56,6 +75,9 @@ try {
   assert(styles.includes(".map-node.card-style-mental-model"), "The mental-model card has no visual treatment")
   assert(styles.includes(".node-relationship") && appSource.includes('class="node-relationship"'), "Child cards do not expose their relationship to the parent")
   assert(styles.includes(".detail-relationship") && appSource.includes("relationshipPanel.hidden = parentId === null"), "Child details do not promote the parent relationship near the top")
+  assert(styles.includes(".human-validated") && styles.includes(".human-impossible"), "Human validated and impossible outcomes are not visually distinct")
+  assert(styles.includes(".agent-passed") && styles.includes(".agent-failed") && styles.includes(".agent-stale"), "Agent test outcomes are not visually distinct")
+  assert(appSource.includes("createValidationPresentation") && appSource.includes("dialog-agent-locations"), "Cards do not render independent human and agent-test status with test locations")
   assert(styles.includes("overflow-wrap: anywhere") && styles.includes("white-space: normal"), "Node titles can still be visually truncated")
   console.log("ready: the local HTTP app identifies the shared server and serves map-specific browser and proof surfaces")
   console.log("ready: full node titles wrap and mental-model cards expose their first section at a glance")
@@ -159,27 +181,31 @@ try {
   const marked = await app(new Request("http://local.test/api/verification/G0", {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ verified: true }),
+    body: JSON.stringify({ status: "impossible", description: "The human confirmed that this Expect cannot hold as written." }),
   }))
   assert(marked.status === 200, `Expected mark request to return 200, received ${marked.status}`)
   const savedFile = JSON.parse(await readFile(verificationPath, "utf8"))
-  assert(typeof savedFile.verified.G0?.verifiedAt === "string", "The G0 mark was not written to the verification file")
+  assert(savedFile.reviews.G0?.status === "impossible", "The G0 human outcome was not written to the verification file")
+  assert(savedFile.reviews.G0?.description.includes("cannot hold"), "The G0 human description was not written to the verification file")
 
   const reopenedStore = await createDataStore({
     treePath,
     verificationPath,
+    agentValidationPath,
   })
-  assert("G0" in reopenedStore.getVerification().verified, "A fresh store did not reopen the saved G0 mark")
-  console.log("ready: human marks persist in a separate file and reopen in a fresh store")
+  assert(reopenedStore.getVerification().reviews.G0?.status === "impossible", "A fresh store did not reopen the saved G0 human outcome")
+  assert(reopenedStore.getAgentValidation().validations.G0?.status === "passed", "A fresh store did not reopen the generated agent-test result")
+  console.log("ready: human outcomes and generated agent-test evidence persist independently and reopen in a fresh store")
 
   const reopenedApp = createHttpApp({
     getDataStore: async () => reopenedStore,
     publicRoot: join(appRoot, "public"),
+    runtimeIdentity,
   })
   const reset = await reopenedApp(new Request("http://local.test/api/verification", { method: "DELETE" }))
   assert(reset.status === 200, `Expected reset request to return 200, received ${reset.status}`)
   const resetFile = JSON.parse(await readFile(verificationPath, "utf8"))
-  assert(Object.keys(resetFile.verified).length === 0, "Reset did not empty the verification file")
+  assert(Object.keys(resetFile.reviews).length === 0, "Reset did not empty the verification file")
   assert(typeof resetFile.updatedAt === "string", "Reset did not record its time")
   console.log("ready: reset clears all marks while preserving the verification file")
 
